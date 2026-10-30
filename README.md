@@ -1,6 +1,7 @@
 > **Token-package fork:** Docker Compose starts a focused console for quota
-> overview, package management and request logs. Each package has a model allowlist,
-> a lifetime token allowance and an independent sharing link. See the
+> overview, supplier setup, package management and request logs. A separately
+> authenticated management MCP lets agents use the same operations. Each package
+> has a model allowlist, a lifetime token allowance and an independent sharing link. See the
 > [deployment guide](docs/token-packages.md). Build this fork to keep its quota enforcement.
 
 <div align="center">

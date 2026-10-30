@@ -14,15 +14,45 @@ protocol translation. It adds no production dependency.
   existing ordinary keys and periodic budgets retain their behavior.
 - `internal/gui/token_packs.go` provides the focused management API, console assets
   and public read-only share page. `assets/quota/` contains its isolated UI.
+- `internal/gui/quota_providers.go` provides narrow supplier summaries, validated
+  configuration edits, draft model discovery and connection tests. Draft calls
+  use a per-operation HTTP client selected through `catalog.WithHTTPClient`.
+- `internal/gui/quota_mcp*.go` exposes the same management operations as fixed MCP
+  tools. It dispatches in-process to the existing HTTP handlers, without a second
+  storage or validation implementation.
 - `compose.yaml` selects the console using `MAGPIE_QUOTA_PANEL=1`. Upstream
-  providers are configured with the existing Magpie CLI.
+  providers can be configured in the console, over management MCP, or with the CLI.
 
 ## Boundaries and state
 
-The console has overview, package management and request logs. The administrator
+The console has overview, package management, request logs and supplier setup. The administrator
 uses the existing `MAGPIE_WEB_KEY` browser authentication. Other desktop and plugin
 management routes are absent from the focused handler. The default desktop UI is
 unchanged when this mode is not selected.
+
+Supplier API responses contain no full API keys. Simple API-key suppliers can be
+created, edited and enabled or disabled. Existing multi-key, multi-protocol,
+account-backed or otherwise advanced suppliers are read-only here. Leaving an
+existing key blank preserves it only for the same normalized complete base URL
+and protocol. Changing either requires a new explicit key. Draft model discovery
+and probes never save configuration, never follow redirects, use a 15-second
+deadline and read at most 1 MiB from the chosen origin. Saving updates the package
+model catalog without restarting. A probe makes a small generation request and
+can incur upstream charges.
+
+Management MCP is available only at exact `/api/mcp`, outside the browser cookie
+guard but inside the web allow list. It requires a separate `MAGPIE_MCP_KEY` bearer
+credential of 32–256 URL-safe ASCII characters, distinct from the browser key.
+Missing, invalid or reused browser keys disable the endpoint. Cookies and package
+keys do not authenticate MCP. Cross-origin browser requests are rejected.
+The stateless Streamable HTTP transport supports `2025-11-25`, `2025-06-18` and
+`2025-03-26`; unsupported revisions return explicit supported-version information.
+Dual-era clients may fall back; clients pinned to `2026-07-28` are unsupported.
+It returns JSON to POST requests, acknowledges notifications without executing
+tools, and returns 405 to GET/DELETE. Tool arguments are bounded to 64 KiB and
+whitelisted; captured responses are bounded to 4 MiB. There are no arbitrary HTTP
+or shell tools. Administrative share links are returned intentionally, so the
+management credential must never be distributed with a package.
 
 Only exact public `/share/{token}` reads bypass administrator authentication.
 Share tokens are independent bearer credentials: possession grants access to that

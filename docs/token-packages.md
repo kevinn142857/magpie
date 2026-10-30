@@ -1,6 +1,6 @@
 # Docker 部署与 Token 套餐
 
-此 fork 在 Magpie 原有网关上提供简化面板：**额度概览、额度管理、日志**。
+此 fork 在 Magpie 原有网关上提供简化面板：**额度概览、供应商接入、额度管理、日志**。
 创建套餐时填写名称、允许模型和 Token 额度，生成独立 API Key 与分享链接。
 接收者打开链接即可复制请求地址、Key 和模型；无需进入管理面板。
 
@@ -46,14 +46,36 @@ HTTPS 反向代理可以转发到默认的 `127.0.0.1:3430`，并应允许流式
 否则面板会以跨来源请求为由拒绝修改。Nginx 对应配置为
 `proxy_set_header Host $http_host;`。仅设置 `X-Forwarded-Host` 不足以替代 `Host`。
 
-## 管理员登录与配置上游
+## 管理员登录与接入供应商
 
 打开 `http://127.0.0.1:3430`，使用 `.env` 的 `MAGPIE_WEB_KEY` 登录。
 服务器部署时打开自己的对外地址；远程服务器仍只绑定本机时，
 可先使用 `ssh -L 3430:127.0.0.1:3430 user@server` 建立访问隧道。
 
-此面板只管理套餐和用量。首次添加上游使用 Magpie 自带 CLI，
-或使用已保存了供应商配置的 `/config` 数据卷。例如：
+登录后进入“供应商接入”，点击“接入供应商”，直接在网页配置上游：
+
+1. 填写名称，选择上游实际支持的协议。
+2. 填写上游 Base URL 和 API Key，再填写模型 ID，或从上游拉取模型后选择。
+3. 可先测试连接，再保存。连接测试会向上游发送小请求，可能消耗少量 Token。
+4. 回到“额度管理”创建套餐，从该供应商的模型中选择即可。
+
+Base URL 按协议填写：
+
+| 协议 | Base URL 示例 |
+| --- | --- |
+| OpenAI Chat Completions | `https://upstream.example.com/v1` |
+| OpenAI Responses | `https://upstream.example.com/v1` |
+| Anthropic Messages | `https://upstream.example.com` |
+| Gemini GenerateContent | `https://upstream.example.com/v1beta` |
+
+保存后网页仅显示 Key 的已设置状态或脱敏信息，不回显原始 Key。
+编辑已配置 Key 的供应商时，地址和协议不变可以留空 Key 以保留已有值；
+更改地址或协议时必须重新输入 Key，
+保存、测试和拉取模型都遵循这条规则，避免把旧凭证发送到新地址。
+原本不需要 Key 的本地模型服务器可以留空。
+多 Key、订阅账号、自定义鉴权 Header 等高级配置不会被简化编辑器自动覆盖。
+
+CLI 仍可用于高级操作，但不是首次接入的必要步骤。例如：
 
 ```sh
 docker compose exec magpie magpie provider add "My Relay" \
@@ -64,12 +86,65 @@ docker compose exec magpie magpie provider add "My Relay" \
 docker compose exec magpie magpie providers
 ```
 
-上面所有域名、模型和 Key 都是占位值。替换为你拥有的真实上游配置。
-`url` 是兼容 OpenAI Chat Completions 的上游 Base URL，通常以 `/v1` 结尾。
-原生 Anthropic 接口可以改用 `anthropic=https://upstream.example.com`。
-CLI 显示的供应商 ID 与模型 ID 构成面板中的模型名，例如 `my-relay/YOUR_MODEL_ID`。
-修改供应商后若模型列表尚未刷新，刷新面板；必要时执行
-`docker compose restart magpie`。上游 Key 留在数据卷中，套餐使用另行生成的网关 Key。
+示例中的域名、模型和 Key 都是占位值。替换为你拥有的真实上游配置。
+供应商 ID 与上游模型 ID 构成面板中的模型名，例如 `my-relay/YOUR_MODEL_ID`。
+保存后刷新套餐模型列表即可选择新模型。上游 Key 留在数据卷中，
+套餐使用另行生成的网关 Key。
+
+## 通过 MCP 管理（可选）
+
+管理 MCP 的地址为 `http://127.0.0.1:3430/api/mcp`，使用独立的
+`MAGPIE_MCP_KEY` Bearer 凭证。默认留空时关闭此接口，不影响网页和套餐调用。
+启用时再次运行 `openssl rand -hex 32` 生成另一把新 Key，填入 `.env` 的
+`MAGPIE_MCP_KEY`，然后执行 `docker compose up -d` 使环境配置生效。
+Key 要求 32–256 个字母、数字或 `- . _ ~` 字符；推荐命令生成的 64 个十六进制字符。
+
+这把 Key 可以管理供应商、套餐、请求日志和核销，不能发给套餐接收者，
+也不要复用网页的 `MAGPIE_WEB_KEY` 或套餐 API Key。
+管理员 MCP 仅接受准确路径 `/api/mcp` 的 POST 请求；不要在地址末尾额外加 `/`。
+远程连接时将示例地址替换为服务的 HTTPS 地址。
+
+首版支持 initialize-era MCP 协议版本 `2025-11-25`、`2025-06-18`、`2025-03-26`。
+同时支持新旧协议的客户端可以回退到这些版本；固定要求 2026 协议、不能回退的客户端
+暂不支持。该接口使用无状态 Streamable HTTP，不提供 GET/SSE 常驻通知流。
+
+Claude Code 的 HTTP MCP 使用 `--transport http` 和 `--header` 配置，
+语法见 [Claude Code 官方 MCP 文档](https://code.claude.com/docs/en/mcp#option-1-add-a-remote-http-server)：
+
+```sh
+claude mcp add --transport http magpie-admin http://127.0.0.1:3430/api/mcp \
+  --header 'Authorization: Bearer <MCP key>'
+```
+
+把 `<MCP key>` 替换为新生成的管理员 MCP Key。支持 HTTP MCP 和请求头配置的客户端
+也可以使用以下 `mcpServers` 配置；具体配置文件位置由各客户端决定：
+
+```json
+{
+  "mcpServers": {
+    "magpie-admin": {
+      "type": "http",
+      "url": "http://127.0.0.1:3430/api/mcp",
+      "headers": {
+        "Authorization": "Bearer <MCP key>"
+      }
+    }
+  }
+}
+```
+
+可用的管理工具：
+
+| 工具 | 操作 |
+| --- | --- |
+| `list_suppliers` / `create_supplier` / `update_supplier` | 查询、新增、修改供应商 |
+| `get_supplier_models` / `test_supplier` | 获取上游模型、测试连接 |
+| `list_token_packages` / `create_token_package` / `update_token_package` | 查询、创建、修改 Token 套餐 |
+| `list_models` | 查询当前可供套餐选择的模型 |
+| `list_request_logs` / `settle_token_request` | 查询请求日志、核销已确认的实际用量 |
+
+供应商改地址或协议时仍需重新提供上游 Key，核销仍需确认请求实际用量。
+此接口不启用套餐 Key 对 Magpie 原有搜索 MCP 的访问；套餐 Key 不能管理供应商或额度。
 
 ## 创建和分享套餐
 

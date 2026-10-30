@@ -12,11 +12,11 @@ async function browserFor(engine) {
 }
 after(async () => { await Promise.all([...browsers.values()].map(async (browser) => (await browser).close())); });
 const labels = {
-  zh: ["额度概览", "额度管理", "请求日志"],
-  en: ["Overview", "Token packages", "Request logs"],
-  "zh-TW": ["額度總覽", "額度管理", "請求記錄"],
-  ja: ["使用状況", "トークンパッケージ", "リクエストログ"],
-  de: ["Übersicht", "Token-Pakete", "Anfrageprotokoll"],
+  zh: ["额度概览", "额度管理", "请求日志", "供应商接入"],
+  en: ["Overview", "Token packages", "Request logs", "Providers"],
+  "zh-TW": ["額度總覽", "額度管理", "請求記錄", "供應商接入"],
+  ja: ["使用状況", "トークンパッケージ", "リクエストログ", "プロバイダー"],
+  de: ["Übersicht", "Token-Pakete", "Anfrageprotokoll", "Anbieter"],
 };
 
 async function fixture(page, options = {}) {
@@ -24,17 +24,40 @@ async function fixture(page, options = {}) {
     packs: [{ id: "one", name: "Research", models: ["openai/research"], totalTokens: 1000000,
       usedTokens: 250000, reservedTokens: 1200, remainingTokens: 748800, enabled: true,
       createdAt: "2026-10-30T02:00:00Z", shareURL: "http://magpie.test/share/fixture-token" }],
-    events: [], logsQueries: [], failed: false,
+    providers: options.emptyProviders ? [] : [{ id: "openai", name: "Research provider", protocol: "chat", baseURL: "https://research.example/v1", models: ["research"], enabled: true, keyConfigured: true, keyMasked: "••••cret" }],
+    events: [], providerEvents: [], logsQueries: [], failed: false, providerFailed: false, probeWait: null,
   };
+  if (options.emptyPacks) state.packs = [];
+  if (options.providerReadOnly) Object.assign(state.providers[0], { editable: false, unsupportedReason: "Multiple protocol endpoints are configured." });
   await page.addInitScript(() => {
     window.quotaCopies = [];
     Object.defineProperty(navigator, "clipboard", { value: { writeText: async (text) => window.quotaCopies.push(text) } });
   });
   await page.route("**/*", async (route) => {
     const req = route.request(), url = new URL(req.url()), p = url.pathname;
+    if (p.startsWith("/api/quota-providers")) {
+      if (state.providerFailed) return route.fulfill({ status: 503, json: { error: "Provider unavailable" } });
+      if (p === "/api/quota-providers" && req.method() === "GET") return route.fulfill({ json: { providers: state.providers } });
+      const body = req.postDataJSON();
+      state.providerEvents.push({ method: req.method(), path: p, body });
+      if (p.endsWith("/models")) return route.fulfill({ json: { models: ["gpt-test", "o1-test"] } });
+      if (p.endsWith("/probe")) {
+        if (state.probeWait) await state.probeWait;
+        return route.fulfill({ json: { ok: true, statusCode: 200, model: "gpt-test" } });
+      }
+      if (req.method() === "POST") {
+        const provider = { id: "studio", name: body.name, protocol: body.protocol, baseURL: body.baseURL,
+          models: body.models, enabled: true, keyConfigured: true, keyMasked: "••••cret" };
+        state.providers.push(provider);
+        return route.fulfill({ json: { provider } });
+      }
+      const provider = state.providers.find((item) => item.id === p.split("/").at(-1));
+      for (const field of ["name", "protocol", "baseURL", "models", "enabled"]) if (field in body) provider[field] = body[field];
+      return route.fulfill({ json: { provider } });
+    }
     if (p.startsWith("/api/token-packs")) {
       if (state.failed) return route.fulfill({ status: 503, json: { error: "Storage unavailable" } });
-      if (p === "/api/token-packs/models") return route.fulfill({ json: { models: [{ id: "openai/research", name: "Research model" }] } });
+      if (p === "/api/token-packs/models") return route.fulfill({ json: { models: state.providers.filter((item) => item.enabled).flatMap((provider) => provider.models.map((model) => ({ id: `${provider.id}/${model}`, name: provider.id === "openai" ? "Research model" : model }))) } });
       if (p === "/api/token-packs/logs") {
         state.logsQueries.push(url.searchParams.get("pack") || "");
         return route.fulfill({ json: { logs: [{ id: "log-1", packId: "one", packName: "Research", model: "openai/research",
@@ -76,7 +99,7 @@ async function fixture(page, options = {}) {
 
 for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium", "webkit"])) {
   for (const locale of ["zh", "en", "zh-TW", "ja", "de"]) {
-    test(`${engine} ${locale}: quota console has exactly three views and handles narrow layouts`, async (t) => {
+    test(`${engine} ${locale}: quota console has four focused views and handles narrow layouts`, async (t) => {
       const browser = await browserFor(engine);
       const context = await browser.newContext({ locale, viewport: { width: 1280, height: 850 }, reducedMotion: "reduce" });
       t.after(() => context.close());
@@ -98,9 +121,16 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
         await page.setViewportSize({ width, height: 844 });
         assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
       }
+      await page.getByRole("button", { name: labels[locale][3], exact: true }).click();
+      await page.locator("#provider-list [data-provider-id=openai]").waitFor();
+      for (const width of [390, 768]) {
+        await page.setViewportSize({ width, height: 844 });
+        assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
+      }
       if (process.env.ARTIFACT_DIR && locale === "zh") {
         await fs.mkdir(process.env.ARTIFACT_DIR, { recursive: true });
         await page.setViewportSize({ width: 1440, height: 1000 });
+        await page.screenshot({ path: path.join(process.env.ARTIFACT_DIR, `${engine}-quota-providers.png`), fullPage: true });
         await page.getByRole("button", { name: labels[locale][0], exact: true }).click();
         await page.screenshot({ path: path.join(process.env.ARTIFACT_DIR, `${engine}-quota-console.png`), fullPage: true });
       }
@@ -218,5 +248,139 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
     await page.getByRole("button", { name: "请求日志", exact: true }).click();
     await page.locator("#log-list").getByText("HTTP 502", { exact: true }).waitFor();
     assert.doesNotMatch(await page.locator("#log-list").textContent(), /private upstream body/);
+  });
+
+  test(`${engine}: onboard and edit providers without exposing or forwarding a stored key to another address`, async (t) => {
+    const browser = await browserFor(engine);
+    const context = await browser.newContext({ locale: "zh", viewport: { width: 1280, height: 900 } });
+    t.after(() => context.close());
+    const page = await context.newPage();
+    page.setDefaultTimeout(15000);
+    page.setDefaultNavigationTimeout(30000);
+    const state = await fixture(page);
+    await page.goto("http://magpie.test/");
+    await page.locator('[data-stat="totalTokens"]').filter({ hasText: "1" }).waitFor();
+    // Warm the package model cache before adding a provider.
+    await page.getByRole("button", { name: "创建套餐", exact: true }).click();
+    await page.getByRole("checkbox", { name: "Research model" }).waitFor();
+    await page.locator("#cancel-dialog").click();
+    await page.getByRole("button", { name: "供应商接入", exact: true }).click();
+    await page.getByRole("button", { name: "接入供应商", exact: true }).first().click();
+    await page.getByLabel("供应商名称", { exact: true }).fill('Studio <img src=x>');
+    await page.getByRole("button", { name: "API 协议", exact: true }).click();
+    await page.getByRole("menuitemradio", { name: "OpenAI Responses", exact: true }).click();
+    await page.getByLabel("请求地址", { exact: true }).fill("https://relay.example/v1");
+    const key = page.getByLabel("API Key", { exact: true });
+    assert.equal(await key.getAttribute("type"), "password");
+    await key.fill("fixture-provider-secret");
+    await page.getByRole("button", { name: "获取模型", exact: true }).click();
+    await page.waitForFunction(() => document.querySelector("#provider-models")?.value.includes("o1-test"));
+    let finishProbe;
+    state.probeWait = new Promise((resolve) => { finishProbe = resolve; });
+    const probe = page.getByRole("button", { name: "测试连接", exact: true });
+    await probe.click();
+    assert.equal(await probe.isDisabled(), true, "a pending probe cannot be submitted twice");
+    finishProbe();
+    await page.locator("#provider-feedback").getByText(/连接正常/).waitFor();
+    await page.getByRole("button", { name: "保存供应商", exact: true }).click();
+    await page.locator("#provider-dialog").waitFor({ state: "hidden" });
+    const row = page.locator("[data-provider-id=studio]");
+    await row.waitFor();
+    assert.equal(await row.locator("img").count(), 0);
+    assert.doesNotMatch(await page.locator("body").textContent(), /fixture-provider-secret/);
+    assert.equal(await key.inputValue(), "", "secret input is wiped after saving");
+    assert.equal(state.providerEvents.find((event) => event.path === "/api/quota-providers").body.protocol, "responses");
+    await page.getByRole("button", { name: "额度管理", exact: true }).click();
+    await page.getByRole("button", { name: "创建套餐", exact: true }).click();
+    await page.getByRole("checkbox", { name: "gpt-test", exact: true }).waitFor();
+    await page.locator("#cancel-dialog").click();
+    await page.getByRole("button", { name: "供应商接入", exact: true }).click();
+    await row.getByRole("button", { name: "编辑供应商", exact: true }).click();
+    assert.equal(await key.inputValue(), "");
+    await page.getByLabel("供应商名称", { exact: true }).fill("Studio");
+    await page.getByRole("button", { name: "保存供应商", exact: true }).click();
+    await page.locator("#provider-dialog").waitFor({ state: "hidden" });
+    let change = state.providerEvents.at(-1);
+    assert.equal(change.body.apiKey, undefined, "unchanged keys never travel back through the browser");
+    assert.equal(change.body.enabled, undefined, "metadata edits leave concurrent enabled-state changes alone");
+    await row.getByRole("button", { name: "编辑供应商", exact: true }).click();
+    await page.getByLabel("请求地址", { exact: true }).fill("https://another.example/v1");
+    const count = state.providerEvents.length;
+    await page.getByRole("button", { name: "保存供应商", exact: true }).click();
+    await page.locator("#provider-form-error").getByText(/重新填写 API Key/).waitFor();
+    assert.equal(state.providerEvents.length, count, "changing the target never forwards a stored credential");
+    await key.fill("replacement-key");
+    await page.getByRole("button", { name: "保存供应商", exact: true }).click();
+    await page.locator("#provider-dialog").waitFor({ state: "hidden" });
+    assert.equal(state.providerEvents.at(-1).body.apiKey, "replacement-key");
+    await row.getByRole("button", { name: "停用供应商", exact: true }).click();
+    await row.getByRole("button", { name: "启用供应商", exact: true }).waitFor();
+    assert.deepEqual(state.providerEvents.at(-1).body, { enabled: false });
+    state.providerFailed = true;
+    await page.getByRole("button", { name: "刷新", exact: true }).click();
+    await page.locator("#global-error").getByText(/Provider unavailable/).waitFor();
+    assert.equal(await row.isVisible(), true, "failed reads preserve existing provider rows");
+  });
+
+  test(`${engine}: empty packages and model pickers lead to provider onboarding in the panel`, async (t) => {
+    const browser = await browserFor(engine);
+    const context = await browser.newContext({ locale: "zh", viewport: { width: 390, height: 844 } });
+    t.after(() => context.close());
+    const page = await context.newPage();
+    page.setDefaultTimeout(15000);
+    await fixture(page, { emptyPacks: true, emptyProviders: true });
+    await page.goto("http://magpie.test/");
+    await page.locator("#overview-list").getByRole("button", { name: "接入供应商", exact: true }).click();
+    await page.locator("#view-providers").waitFor({ state: "visible" });
+    await page.getByRole("button", { name: "额度管理", exact: true }).click();
+    await page.getByRole("button", { name: "创建套餐", exact: true }).click();
+    await page.getByRole("button", { name: "先接入供应商", exact: true }).click();
+    await page.locator("#pack-dialog").waitFor({ state: "hidden" });
+    await page.locator("#view-providers").waitFor({ state: "visible" });
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
+  });
+
+  test(`${engine}: provider probe failures keep the form editable and never re-display a stored key`, async (t) => {
+    const browser = await browserFor(engine);
+    const context = await browser.newContext({ locale: "zh" });
+    t.after(() => context.close());
+    const page = await context.newPage();
+    page.setDefaultTimeout(15000);
+    const state = await fixture(page);
+    await page.goto("http://magpie.test/");
+    await page.getByRole("button", { name: "供应商接入", exact: true }).click();
+    await page.locator("[data-provider-id=openai]").getByRole("button", { name: "编辑供应商", exact: true }).click();
+    state.providerFailed = true;
+    await page.getByRole("button", { name: "测试连接", exact: true }).click();
+    await page.locator("#provider-form-error").getByText("Provider unavailable", { exact: true }).waitFor();
+    assert.equal(await page.getByRole("button", { name: "测试连接", exact: true }).isEnabled(), true);
+    assert.equal(await page.getByLabel("供应商名称", { exact: true }).inputValue(), "Research provider");
+    assert.equal(await page.getByLabel("API Key", { exact: true }).inputValue(), "");
+    state.providerFailed = false;
+    await page.getByRole("button", { name: "测试连接", exact: true }).click();
+    await page.locator("#provider-feedback").getByText(/连接正常/).waitFor();
+    assert.equal(state.providerEvents.at(-1).body.apiKey, undefined);
+    assert.equal(state.providerEvents.at(-1).body.id, "openai", "only the saved provider ID requests reuse at the unchanged address");
+    await page.getByLabel("API Key", { exact: true }).fill("discard-this-key");
+    await page.keyboard.press("Escape");
+    await page.locator("#provider-dialog").waitFor({ state: "hidden" });
+    assert.equal(await page.getByLabel("API Key", { exact: true }).inputValue(), "");
+  });
+
+  test(`${engine}: complex providers remain visible and cannot be overwritten from the small panel`, async (t) => {
+    const browser = await browserFor(engine);
+    const context = await browser.newContext({ locale: "zh" });
+    t.after(() => context.close());
+    const page = await context.newPage();
+    page.setDefaultTimeout(15000);
+    const state = await fixture(page, { providerReadOnly: true });
+    await page.goto("http://magpie.test/");
+    await page.getByRole("button", { name: "供应商接入", exact: true }).click();
+    const row = page.locator("[data-provider-id=openai]");
+    await row.waitFor();
+    assert.equal(await row.getByRole("button", { name: "编辑供应商", exact: true }).isDisabled(), true);
+    assert.equal(await row.getByRole("button", { name: "停用供应商", exact: true }).isDisabled(), true);
+    assert.match(await row.textContent(), /Multiple protocol endpoints/);
+    assert.equal(state.providerEvents.length, 0);
   });
 }

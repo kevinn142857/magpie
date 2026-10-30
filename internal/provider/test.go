@@ -423,6 +423,12 @@ func (p Provider) testOn(ctx context.Context, client string, proto Protocol, mod
 	return probe(ctx, p, proto, url, b, model, testWait)
 }
 
+// TestEndpoint probes only the selected protocol and model, without fetching or
+// saving models or trying another protocol. The caller controls ctx's HTTP client.
+func (p Provider) TestEndpoint(ctx context.Context, proto Protocol, model string) Result {
+	return p.testOn(ctx, "", proto, model, model)
+}
+
 // keyFor is p using the first key on that works with proto: one made for
 // it, else one made for any. A provider without keys is left as it is.
 func (p Provider) keyFor(proto Protocol) (Provider, bool) {
@@ -620,7 +626,7 @@ func probe(ctx context.Context, p Provider, proto Protocol, url string, body []b
 	var tries []try
 	send := func(q *http.Request) (*http.Response, error) {
 		t := try{url: q.URL.String(), start: time.Now()}
-		res, err := p.Do(http.DefaultClient, q)
+		res, err := p.Do(catalog.HTTPClient(ctx), q)
 		if t.err = err; err == nil {
 			t.status = res.StatusCode
 		}

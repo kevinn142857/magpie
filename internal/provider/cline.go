@@ -69,7 +69,7 @@ func (p Provider) clineFeed(ctx context.Context) ([]catalog.Model, string, error
 	}
 	req.Header.Set("Accept", "application/json")
 	ClineClient(req.Header)
-	res, err := http.DefaultClient.Do(req)
+	res, err := catalog.HTTPClient(ctx).Do(req)
 	if err != nil {
 		return nil, u, err
 	}

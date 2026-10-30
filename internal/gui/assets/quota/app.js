@@ -97,7 +97,7 @@
   }
 
   function setView(view) {
-    if (!["overview", "packages", "logs"].includes(view)) return;
+    if (!["overview", "packages", "logs", "providers"].includes(view)) return;
     state.view = view;
     document.querySelectorAll(".view").forEach((element) => { element.hidden = element.id !== `view-${view}`; });
     document.querySelectorAll("nav [data-view]").forEach((element) => {
@@ -109,7 +109,10 @@
     $("#breadcrumb").textContent = quotaT(view);
     $("#page-title").textContent = quotaT(view);
     $("#page-description").textContent = quotaT(`${view}Description`);
+    document.querySelectorAll(".create-pack").forEach((element) => { element.hidden = view === "providers"; });
+    $("#add-provider").hidden = view !== "providers";
     if (view === "logs") void loadLogs();
+    if (view === "providers") void window.quotaProviders?.load();
   }
 
   function renderBalance(pack, summary) {
@@ -166,6 +169,7 @@
     if (!state.packs.length) {
       overview.append(empty("noPackages", "noPackagesHelp"));
       packages.append(empty("noPackages", "noPackagesHelp"));
+      overview.firstElementChild.append(button(quotaT("addProvider"), "button secondary empty-provider-link", () => setView("providers")));
     } else {
       state.packs.slice(0, 6).forEach((pack) => overview.append(renderBalance(pack, true)));
       state.packs.forEach((pack) => packages.append(renderBalance(pack, false)));
@@ -323,6 +327,9 @@
         label.append(input, node("span", "", model.name || model.id));
         $("#model-choices").append(label);
       }
+      if (!state.models.length) {
+        $("#model-choices").append(button(quotaT("providerFirst"), "button secondary", () => { closeForm(); setView("providers"); }));
+      }
     }
   }
 
@@ -408,7 +415,11 @@
   document.querySelectorAll("nav [data-view]").forEach((element) => element.addEventListener("click", () => setView(element.dataset.view)));
   document.querySelectorAll(".create-pack").forEach((element) => element.addEventListener("click", () => openForm()));
   $("#manage-all").addEventListener("click", () => setView("packages"));
-  $("#refresh").addEventListener("click", async () => { await loadPacks(); if (state.view === "logs") await loadLogs(); });
+  $("#refresh").addEventListener("click", async () => {
+    await loadPacks();
+    if (state.view === "logs") await loadLogs();
+    if (state.view === "providers") await window.quotaProviders?.load();
+  });
   $("#copy-base-url").addEventListener("click", () => copy(state.baseURL));
   $("#pack-form").addEventListener("submit", submitForm);
   $("#close-dialog").addEventListener("click", closeForm);
@@ -429,6 +440,10 @@
       choices[(current + (event.key === "ArrowDown" ? 1 : -1) + choices.length) % choices.length]?.focus({ preventScroll: true });
     }
   });
+  // The provider view shares the small console's primitives, not the desktop
+  // shell. Saving a provider invalidates model discovery immediately.
+  window.quotaConsole = { api, node, button, empty, message, toast, setView,
+    modelsChanged() { modelLoaded = false; state.models = []; } };
   setView("overview");
   void loadPacks();
 })();

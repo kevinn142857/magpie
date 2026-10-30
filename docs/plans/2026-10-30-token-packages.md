@@ -2,7 +2,7 @@
 
 **Goal:** Run the Magpie fork in Docker with a focused quota console and shareable, model-limited token packages.
 
-**Architecture:** Reuse Magpie's providers, protocol translation, gateway identities and web authentication. A separate SQLite package ledger persists lifetime usage and reservations independently of display logs. `MAGPIE_QUOTA_PANEL=1` selects a small console exposing overview, package management and request logs; exact public share routes bypass only administrator authentication.
+**Architecture:** Reuse Magpie's providers, protocol translation, gateway identities and web authentication. A separate SQLite package ledger persists lifetime usage and reservations independently of display logs. `MAGPIE_QUOTA_PANEL=1` selects a small console exposing overview, package management, request logs and supplier setup; exact public share routes bypass only administrator authentication. A separately authenticated management MCP endpoint reuses the console handlers for agents.
 
 **Tech Stack:** Existing Go, modernc SQLite, embedded HTML/CSS/JavaScript and Playwright; no new production dependencies.
 

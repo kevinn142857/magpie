@@ -338,7 +338,7 @@ func LANAddrs() []string {
 // routes, judged by the gateway (onePort), and the page and its API behind
 // the allow list and the key.
 func webServed(port, key string, keep time.Duration, page http.Handler) http.Handler {
-	return onePort(gateway.AllowGuard(tokenPackPublic(webHandler(port, key, keep, page))))
+	return onePort(gateway.AllowGuard(tokenPackPublic(quotaMCP(key, webHandler(port, key, keep, page)))))
 }
 
 // webHandler is what `magpie web` on port serves: the page and its API

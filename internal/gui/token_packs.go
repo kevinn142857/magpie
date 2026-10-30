@@ -53,13 +53,15 @@ func packRow(p tokenpack.Pack) tokenPackRow {
 	return row
 }
 
-// quotaPanelHandler exposes only package operations and its small static UI.
+// quotaPanelHandler exposes package and supplier operations and its small UI.
 // webGuard remains outside it; no other desktop management API is mounted.
 func quotaPanelHandler() http.Handler {
 	mux := http.NewServeMux()
+	quotaProviderRoutes(mux)
 	for _, item := range []struct{ route, asset, contentType string }{
 		{"GET /{$}", "quota/index.html", "text/html; charset=utf-8"},
 		{"GET /quota/app.js", "quota/app.js", "text/javascript; charset=utf-8"},
+		{"GET /quota/providers.js", "quota/providers.js", "text/javascript; charset=utf-8"},
 		{"GET /quota/i18n.js", "quota/i18n.js", "text/javascript; charset=utf-8"},
 		{"GET /quota/app.css", "quota/app.css", "text/css; charset=utf-8"},
 	} {

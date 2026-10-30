@@ -10,6 +10,7 @@
     <link rel="stylesheet" href="/quota/app.css">
     <script defer src="/quota/i18n.js"></script>
     <script defer src="/quota/app.js"></script>
+    <script defer src="/quota/providers.js"></script>
   </head>
   <body>
     <div class="shell">
@@ -36,6 +37,10 @@
           <button type="button" data-view="logs" class="nav-item">
             <span class="nav-symbol" aria-hidden="true">≡</span>
             <span data-i18n="logs"></span>
+          </button>
+          <button type="button" data-view="providers" class="nav-item">
+            <span class="nav-symbol" aria-hidden="true">◇</span>
+            <span data-i18n="providers"></span>
           </button>
         </nav>
         <div class="side-foot">
@@ -71,6 +76,7 @@
               <span aria-hidden="true">＋</span>
               <span data-i18n="create"></span>
             </button>
+            <button type="button" id="add-provider" class="button primary" data-i18n="addProvider" hidden></button>
           </div>
           <section id="view-overview" class="view" aria-labelledby="page-title">
             <div class="stats">
@@ -150,6 +156,16 @@
             </section>
             <p class="under-note" data-i18n="logsHelp"></p>
           </section>
+          <section id="view-providers" class="view" aria-labelledby="page-title" hidden>
+            <section class="card">
+              <div class="card-heading">
+                <h2 data-i18n="connectedProviders"></h2>
+                <span class="muted" data-i18n="providerPrivate"></span>
+              </div>
+              <div id="provider-list"></div>
+            </section>
+            <p class="under-note" data-i18n="providerHelp"></p>
+          </section>
         </main>
         <footer>
           <span data-i18n="footer"></span>
@@ -196,6 +212,57 @@
         <div class="dialog-actions">
           <button type="button" id="cancel-dialog" class="button secondary" data-i18n="cancel"></button>
           <button type="submit" id="submit-pack" class="button primary"></button>
+        </div>
+      </form>
+    </dialog>
+    <dialog id="provider-dialog" aria-labelledby="provider-dialog-title">
+      <form id="provider-form" novalidate>
+        <div class="dialog-head">
+          <div>
+            <span class="eyebrow" data-i18n="providers"></span>
+            <h2 id="provider-dialog-title"></h2>
+          </div>
+          <button type="button" id="close-provider" class="icon-button" data-i18n-label="close">×</button>
+        </div>
+        <p class="muted" data-i18n="providerDialogHelp"></p>
+        <label class="field">
+          <span data-i18n="providerName"></span>
+          <input id="provider-name" name="name" autocomplete="off" maxlength="120" required>
+        </label>
+        <div class="field">
+          <span id="provider-protocol-label" data-i18n="protocol"></span>
+          <div class="protocol-picker">
+            <button type="button" id="provider-protocol" class="button secondary" aria-haspopup="menu" aria-expanded="false" data-i18n-label="protocol">
+              <span id="provider-protocol-name"></span><span aria-hidden="true">⌄</span>
+            </button>
+            <div id="provider-protocol-menu" class="filter-menu protocol-menu" role="menu" hidden></div>
+          </div>
+        </div>
+        <label class="field">
+          <span id="provider-url-label" data-i18n="providerURL"></span>
+          <input id="provider-url" name="baseURL" type="url" autocomplete="off" autocapitalize="off" spellcheck="false" aria-labelledby="provider-url-label" aria-describedby="provider-url-help" placeholder="https://api.example.com/v1" required>
+          <span id="provider-url-help" class="field-hint"></span>
+        </label>
+        <label class="field">
+          <span id="provider-key-label">API Key</span>
+          <input id="provider-key" name="apiKey" type="password" autocomplete="new-password" autocapitalize="off" spellcheck="false" aria-labelledby="provider-key-label" aria-describedby="provider-key-help">
+          <span id="provider-key-help" class="field-hint"></span>
+        </label>
+        <label class="field">
+          <span id="provider-models-label" data-i18n="providerModels"></span>
+          <textarea id="provider-models" name="models" rows="3" placeholder="gpt-model" aria-labelledby="provider-models-label" aria-describedby="provider-models-help"></textarea>
+          <span id="provider-models-help" class="field-hint" data-i18n="providerModelsHelp"></span>
+        </label>
+        <div class="provider-checks">
+          <button type="button" id="discover-provider" class="button secondary" data-i18n="fetchModels"></button>
+          <button type="button" id="probe-provider" class="button secondary" data-i18n="testProvider"></button>
+        </div>
+        <p class="field-hint provider-probe-note" data-i18n="providerProbeHelp"></p>
+        <div id="provider-feedback" class="provider-feedback" role="status" hidden></div>
+        <div id="provider-form-error" class="notice error" role="alert" hidden></div>
+        <div class="dialog-actions">
+          <button type="button" id="cancel-provider" class="button secondary" data-i18n="cancel"></button>
+          <button type="submit" id="save-provider" class="button primary" data-i18n="saveProvider"></button>
         </div>
       </form>
     </dialog>
