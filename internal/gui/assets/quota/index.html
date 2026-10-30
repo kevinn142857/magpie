@@ -1,0 +1,204 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <meta name="color-scheme" content="light">
+    <meta name="referrer" content="no-referrer">
+    <title>magpie</title>
+    <link rel="icon" href="data:,">
+    <link rel="stylesheet" href="/quota/app.css">
+    <script defer src="/quota/i18n.js"></script>
+    <script defer src="/quota/app.js"></script>
+  </head>
+  <body>
+    <div class="shell">
+      <aside class="sidebar">
+        <a class="brand" href="/" aria-label="magpie">
+          <svg viewBox="0 0 28 28" aria-hidden="true">
+            <path d="m4 20 6-14 4 8 10-8-6 17-4-8-10 5Z" fill="currentColor" />
+          </svg>
+          <span>
+            magpie
+            <span class="brand-note" data-i18n="console"></span>
+          </span>
+        </a>
+        <div class="side-caption" data-i18n="workspace"></div>
+        <nav aria-label="Navigation">
+          <button type="button" data-view="overview" class="nav-item active" aria-current="page">
+            <span class="nav-symbol" aria-hidden="true">◫</span>
+            <span data-i18n="overview"></span>
+          </button>
+          <button type="button" data-view="packages" class="nav-item">
+            <span class="nav-symbol" aria-hidden="true">▤</span>
+            <span data-i18n="packages"></span>
+          </button>
+          <button type="button" data-view="logs" class="nav-item">
+            <span class="nav-symbol" aria-hidden="true">≡</span>
+            <span data-i18n="logs"></span>
+          </button>
+        </nav>
+        <div class="side-foot">
+          <span class="live-dot" aria-hidden="true"></span>
+          <span data-i18n="gateway"></span>
+          <span class="version">magpie</span>
+        </div>
+      </aside>
+      <div class="stage">
+        <header class="topbar">
+          <span class="crumb">
+            magpie
+            <span aria-hidden="true">/</span>
+            <span id="breadcrumb"></span>
+          </span>
+          <div class="top-tools">
+            <span id="updated-at" class="muted"></span>
+            <button type="button" id="refresh" class="button quiet">
+              <span aria-hidden="true">↻</span>
+              <span data-i18n="refresh"></span>
+            </button>
+          </div>
+        </header>
+        <main>
+          <div id="global-error" class="notice error" role="alert" hidden></div>
+          <div class="page-heading">
+            <div>
+              <div class="eyebrow" data-i18n="workspace"></div>
+              <h1 id="page-title"></h1>
+              <p id="page-description"></p>
+            </div>
+            <button type="button" class="button primary create-pack">
+              <span aria-hidden="true">＋</span>
+              <span data-i18n="create"></span>
+            </button>
+          </div>
+          <section id="view-overview" class="view" aria-labelledby="page-title">
+            <div class="stats">
+              <article class="stat balance">
+                <div class="stat-label" data-i18n="remaining"></div>
+                <div class="stat-number" data-stat="remainingTokens">—</div>
+                <div class="stat-foot" data-i18n="available"></div>
+              </article>
+              <article class="stat">
+                <div class="stat-label" data-i18n="total"></div>
+                <div class="stat-number" data-stat="totalTokens">—</div>
+                <div class="stat-foot" data-i18n="granted"></div>
+              </article>
+              <article class="stat">
+                <div class="stat-label" data-i18n="used"></div>
+                <div class="stat-number" data-stat="usedTokens">—</div>
+                <div class="stat-foot" id="usage-ratio">—</div>
+              </article>
+              <article class="stat">
+                <div class="stat-label" data-i18n="packageCount"></div>
+                <div class="stat-number" data-stat="packageCount">—</div>
+                <div class="stat-foot" id="active-count">—</div>
+              </article>
+            </div>
+            <div class="overview-grid">
+              <section class="card">
+                <div class="card-heading">
+                  <h2 data-i18n="balances"></h2>
+                  <button type="button" id="manage-all" class="text-button" data-i18n="manageAll"></button>
+                </div>
+                <div id="overview-list" class="pack-summary-list"></div>
+              </section>
+              <aside class="info-stack">
+                <section class="card info-card">
+                  <div class="small-icon" aria-hidden="true">↗</div>
+                  <h2 data-i18n="endpoint"></h2>
+                  <p data-i18n="endpointHelp"></p>
+                  <code id="base-url">—</code>
+                  <button type="button" id="copy-base-url" class="button secondary" data-i18n="copyAddress" disabled></button>
+                </section>
+                <section class="accounting-note">
+                  <span class="note-mark" aria-hidden="true">i</span>
+                  <div>
+                    <h3 data-i18n="accounting"></h3>
+                    <p data-i18n="accountingHelp"></p>
+                  </div>
+                </section>
+              </aside>
+            </div>
+          </section>
+          <section id="view-packages" class="view" aria-labelledby="page-title" hidden>
+            <section class="card">
+              <div class="card-heading">
+                <h2 data-i18n="allPackages"></h2>
+                <span class="muted" id="package-count-note"></span>
+              </div>
+              <div id="package-list"></div>
+            </section>
+            <p class="under-note" data-i18n="shareHelp"></p>
+          </section>
+          <section id="view-logs" class="view" aria-labelledby="page-title" hidden>
+            <section class="card">
+              <div class="card-heading logs-heading">
+                <div>
+                  <h2 data-i18n="recentRequests"></h2>
+                  <span class="muted" data-i18n="latest100"></span>
+                </div>
+                <div class="filter-wrap">
+                  <button type="button" id="log-filter" class="button secondary" aria-haspopup="menu" aria-expanded="false">
+                    <span id="log-filter-label"></span>
+                    <span aria-hidden="true">⌄</span>
+                  </button>
+                  <div id="log-filter-menu" class="filter-menu" role="menu" hidden></div>
+                </div>
+              </div>
+              <div id="log-list"></div>
+            </section>
+            <p class="under-note" data-i18n="logsHelp"></p>
+          </section>
+        </main>
+        <footer>
+          <span data-i18n="footer"></span>
+          <span id="footer-mark">magpie</span>
+        </footer>
+      </div>
+    </div>
+    <dialog id="pack-dialog" aria-labelledby="dialog-title">
+      <form id="pack-form" novalidate>
+        <div class="dialog-head">
+          <div>
+            <span class="eyebrow" data-i18n="packages"></span>
+            <h2 id="dialog-title"></h2>
+          </div>
+          <button type="button" id="close-dialog" class="icon-button" data-i18n-label="close">×</button>
+        </div>
+        <p id="dialog-description" class="muted"></p>
+        <div id="create-fields">
+          <label class="field">
+            <span data-i18n="name"></span>
+            <input id="pack-name" name="name" autocomplete="off" maxlength="80" required>
+          </label>
+          <fieldset class="model-field">
+            <legend data-i18n="models"></legend>
+            <div id="model-choices"></div>
+            <label class="field custom-models">
+              <span data-i18n="customModels"></span>
+              <textarea id="custom-models" name="models" rows="2" placeholder="provider/model"></textarea>
+            </label>
+            <p class="field-hint" data-i18n="modelsHelp"></p>
+          </fieldset>
+        </div>
+        <label class="field">
+          <span id="quota-label" data-i18n="quota"></span>
+          <input id="pack-quota" name="quota" inputmode="decimal" autocomplete="off" placeholder="1M" aria-labelledby="quota-label" aria-describedby="quota-help" required>
+          <span class="field-hint" id="quota-help" data-i18n="quotaHelp"></span>
+        </label>
+        <label class="field" id="expiry-field">
+          <span id="expiry-label" data-i18n="expires"></span>
+          <input id="pack-expires" name="expiresAt" type="datetime-local" aria-labelledby="expiry-label" aria-describedby="expiry-help">
+          <span class="field-hint" id="expiry-help" data-i18n="expiresHelp"></span>
+        </label>
+        <div id="form-error" class="notice error" role="alert" hidden></div>
+        <div class="dialog-actions">
+          <button type="button" id="cancel-dialog" class="button secondary" data-i18n="cancel"></button>
+          <button type="submit" id="submit-pack" class="button primary"></button>
+        </div>
+      </form>
+    </dialog>
+    <div id="toast" class="toast" role="status" hidden></div>
+  </body>
+</html>

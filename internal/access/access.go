@@ -115,6 +115,9 @@ type Key struct {
 	LAN    bool   `json:"lan,omitempty"` // default key and durable migration marker
 	Secret string `json:"secret,omitempty"`
 	Masked string `json:"masked,omitempty"`
+	// TokenPack keeps a package key behind its independent durable ledger,
+	// including when that ledger is missing or unreadable.
+	TokenPack bool `json:"tokenPack,omitempty"`
 	// Limit is the key's own budget (#585); nil for none.
 	Limit *Limit `json:"limit,omitempty"`
 	// More are its limits after the first (#2227), each a window of its
@@ -140,6 +143,7 @@ type Key struct {
 // models and the accounts it may use.
 type Identity struct {
 	KeyID, KeyName string
+	TokenPack      bool
 	Limit          *Limit
 	More           []Limit
 	Models         []string
@@ -318,14 +322,24 @@ func Update(action string, in Change) (string, error) {
 		return "", err
 	}
 	name := strings.TrimSpace(in.Name)
-	if action == "add-key" || action == "rename-key" {
+	if action == "add-key" || action == "add-pack-key" || action == "rename-key" {
 		if name == "" || utf8.RuneCountInString(name) > 120 {
 			return "", errors.New("Use a name between 1 and 120 characters")
 		}
 	}
 	var secret string
 	var mirror *Key
-	if action == "add-key" {
+	if action == "add-key" || action == "add-pack-key" {
+		var models []string
+		if action == "add-pack-key" {
+			models, err = CleanModels(in.Models)
+			if err != nil {
+				return "", err
+			}
+			if len(models) == 0 {
+				return "", errors.New("A token package must allow at least one model")
+			}
+		}
 		id, err := random(12)
 		if err != nil {
 			return "", err
@@ -341,7 +355,7 @@ func Update(action string, in Change) (string, error) {
 			}
 			secret = Prefix + token
 		}
-		keys = append(keys, Key{ID: id, Name: name, Secret: secret})
+		keys = append(keys, Key{ID: id, Name: name, Secret: secret, Models: models, TokenPack: action == "add-pack-key"})
 	} else {
 		i := slices.IndexFunc(keys, func(k Key) bool { return k.ID == in.Key })
 		if i < 0 {
@@ -502,7 +516,7 @@ func Authenticate(secret string) (Identity, bool) {
 			if k.Off {
 				return Identity{}, false
 			}
-			return Identity{KeyID: k.ID, KeyName: k.Name, Limit: k.Limit, More: k.More, Models: HeldModels(k.Models, k.Accounts), Accounts: k.Accounts, Quotas: k.Quotas}, true
+			return Identity{KeyID: k.ID, KeyName: k.Name, TokenPack: k.TokenPack, Limit: k.Limit, More: k.More, Models: HeldModels(k.Models, k.Accounts), Accounts: k.Accounts, Quotas: k.Quotas}, true
 		}
 	}
 	s := settings.Load()

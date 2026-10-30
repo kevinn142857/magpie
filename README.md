@@ -1,3 +1,8 @@
+> **Token-package fork:** Docker Compose starts a focused console for quota
+> overview, package management and request logs. Each package has a model allowlist,
+> a lifetime token allowance and an independent sharing link. See the
+> [deployment guide](docs/token-packages.md). Build this fork to keep its quota enforcement.
+
 <div align="center">
 
 <a href="https://usemagpie.ai"><img src="site/public/img/icon-256.png" width="112" alt="magpie"></a>

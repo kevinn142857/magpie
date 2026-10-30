@@ -1,3 +1,7 @@
+> **Token 套餐版：** 使用 Docker Compose 启动简化面板，只保留额度概览、额度管理和请求日志。
+> 每个套餐可设置模型白名单、一次性总额度，并生成独立分享链接。
+> 配置与部署见[使用指南](docs/token-packages.md)。升级时继续构建此 fork，以保留套餐额度约束。
+
 <div align="center">
 
 <a href="https://usemagpie.ai/zh/"><img src="site/public/img/icon-256.png" width="112" alt="magpie"></a>

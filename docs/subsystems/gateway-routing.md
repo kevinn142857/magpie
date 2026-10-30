@@ -1,5 +1,9 @@
 # Gateway routing and fallback
 
+Package-issued keys also pass the lifetime reservation and settlement rules in
+[Token packages](token-packages.md). Their allowance is independent of the ordinary
+periodic key budget and display usage logs.
+
 The gateway is magpie's local LLM endpoint (`127.0.0.1:3425` by default). It
 serves Chat Completions, Responses, Anthropic Messages and Gemini. It finds
 the provider, key or account and model for each request. When the upstream

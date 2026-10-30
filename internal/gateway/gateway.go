@@ -849,7 +849,7 @@ func (s *Server) Handler() http.Handler {
 	})
 	// the goroutine dump first, ahead of every lock the rest can be stuck
 	// on (dumpFirst)
-	return s.dumpFirst(s.counted(holdCatalog(corsGuard(callerGuard(withCaller(keyLimited(mux)))))))
+	return s.dumpFirst(s.counted(holdCatalog(corsGuard(callerGuard(withCaller(s.tokenPackLimited(keyLimited(mux))))))))
 }
 
 // responsesOverHTTP answers a GET on /v1/responses, which is how a client

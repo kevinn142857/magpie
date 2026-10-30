@@ -2,6 +2,10 @@ FROM golang:1.26-alpine AS build
 
 WORKDIR /src
 
+# Bound compiler parallelism on hosts that also run tests or other services.
+ENV GOMAXPROCS=2 \
+    GOFLAGS=-p=2
+
 COPY go.mod go.sum ./
 RUN go mod download
 

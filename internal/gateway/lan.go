@@ -573,6 +573,7 @@ func appendUsage(r *http.Request, rec usage.Record) {
 	if r.Context().Value(observedKey{}) != nil {
 		rec.Watched = true
 	}
+	recordTokenPackUsage(r, rec)
 	budget.Append(rec)
 }
 
