@@ -72,7 +72,7 @@ func geminiPage(ctx context.Context, u, key string, headers map[string]string) (
 	for k, v := range headers {
 		PutUserHeader(req.Header, k, v)
 	}
-	res, err := http.DefaultClient.Do(req)
+	res, err := HTTPClient(ctx).Do(req)
 	if err != nil {
 		return nil, "", err
 	}

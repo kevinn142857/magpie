@@ -515,7 +515,7 @@ func fetchPage(ctx context.Context, url, key string, anthropic bool, headers map
 		for k, v := range headers {
 			PutUserHeader(req.Header, k, v)
 		}
-		res, err := http.DefaultClient.Do(req)
+		res, err := HTTPClient(ctx).Do(req)
 		if err != nil {
 			return nil, nil, err
 		}

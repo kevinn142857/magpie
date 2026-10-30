@@ -878,6 +878,9 @@ func Handler(w Windows, gw *gateway.Server) http.Handler {
 	// app's windows share their settings state with
 	if ownWeb(w) {
 		webPage.Store(true)
+		if quotaPanelEnabled() {
+			return quotaPanelHandler()
+		}
 	}
 	mux := http.NewServeMux()
 	mux.Handle("/", devPage(revalidated(http.FileServer(http.FS(staticFS())))))

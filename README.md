@@ -1,3 +1,13 @@
+> **Token-package fork:** Docker Compose starts a focused console for quota
+> overview, supplier setup, package management and request logs. A separately
+> authenticated management MCP lets agents use the same operations. Each package
+> has a model allowlist, a lifetime token allowance and an independent sharing link. See the
+> [deployment guide](docs/token-packages.md). Build this fork to keep its quota enforcement.
+> Recipients can also use their package key with a separate model MCP for quota
+> lookup, model discovery and text generation, sharing the same token allowance.
+> Optional search and webpage tools use a separate durable call allowance;
+> their search services are configured in the same supplier page.
+
 <div align="center">
 
 <a href="https://usemagpie.ai"><img src="site/public/img/icon-256.png" width="112" alt="magpie"></a>

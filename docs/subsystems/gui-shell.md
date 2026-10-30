@@ -1,5 +1,10 @@
 # GUI app shell
 
+The Docker fork can select an isolated quota-only console with
+`MAGPIE_QUOTA_PANEL=1`; its management and public sharing boundaries are described
+in [Token packages](token-packages.md). The regular desktop shell below remains
+the default outside that browser mode.
+
 The desktop app has a tray (menu bar) icon whose click drops a compact
 panel, and a regular window. Both show one small web UI served from
 embedded assets. The page talks to Go over a JSON API on the same handler,

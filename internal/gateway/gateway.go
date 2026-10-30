@@ -834,6 +834,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/mcp/{name}", s.mcpProxy)
 	mux.HandleFunc("/mcp/run/{name}", runMCP)
 	mux.HandleFunc(SearchMCPPath, s.searchMCP)
+	mux.HandleFunc(PackageMCPPath, s.packageMCP)
 	mux.HandleFunc(VisionMCPPath, s.visionMCP)
 	mux.HandleFunc(ImageMCPPath, s.imageMCP)
 	mux.HandleFunc(ImageMCPFiles+"{name}", s.imageMCPFile)
@@ -849,7 +850,7 @@ func (s *Server) Handler() http.Handler {
 	})
 	// the goroutine dump first, ahead of every lock the rest can be stuck
 	// on (dumpFirst)
-	return s.dumpFirst(s.counted(holdCatalog(corsGuard(callerGuard(withCaller(keyLimited(mux)))))))
+	return s.dumpFirst(s.counted(holdCatalog(corsGuard(callerGuard(withCaller(s.tokenPackLimited(keyLimited(mux))))))))
 }
 
 // responsesOverHTTP answers a GET on /v1/responses, which is how a client
@@ -4582,6 +4583,7 @@ func (s *Server) forwardOnce(ctx context.Context, p provider.Provider, to provid
 	if err != nil {
 		return res, err
 	}
+	packageMCPLimitResponse(ctx, res)
 	// Cline's whole replies come in {success, data}; a web page or
 	// nothing at all, served 200, is the 502 it stands for (#1012)
 	// Zhipu's and Z.ai's Responses API refuses a key 200 in the platform's

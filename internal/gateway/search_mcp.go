@@ -53,6 +53,10 @@ type mcpMessage struct {
 }
 
 func (s *Server) searchMCP(w http.ResponseWriter, r *http.Request) {
+	if access.Caller(r.Context()).TokenPack {
+		s.packageMCP(w, r)
+		return
+	}
 	serveMCP(w, r, "magpie's web search", 1<<20, s.searchMCPCall)
 }
 

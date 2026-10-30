@@ -1,0 +1,25 @@
+services:
+  magpie:
+    image: magpie-packages:local
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        VERSION: ${MAGPIE_VERSION:-packages-dev}
+    restart: unless-stopped
+    ports:
+      - target: 3430
+        published: "${MAGPIE_PORT:-3430}"
+        host_ip: "${MAGPIE_HOST:-127.0.0.1}"
+        protocol: tcp
+    environment:
+      MAGPIE_QUOTA_PANEL: "1"
+      MAGPIE_PUBLIC_URL: ${MAGPIE_PUBLIC_URL:?Set MAGPIE_PUBLIC_URL in .env to the address recipients will use}
+      MAGPIE_WEB_KEY: ${MAGPIE_WEB_KEY:?Generate MAGPIE_WEB_KEY with openssl rand -hex 32 and set it in .env}
+      MAGPIE_MCP_KEY: ${MAGPIE_MCP_KEY:-}
+    volumes:
+      - magpie-config:/config
+    command: [web, --addr, "0.0.0.0:3430", --no-open]
+
+volumes:
+  magpie-config:

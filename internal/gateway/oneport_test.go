@@ -31,7 +31,8 @@ func TestClientPathCoversHandler(t *testing.T) {
 		"AlphaSearchPath": AlphaSearchPath, "HeapPath": HeapPath, "CPUPath": CPUPath,
 		"GoroutinesPath": GoroutinesPath, "ClaudeRunsPath": ClaudeRunsPath, "SearchMCPPath": SearchMCPPath, "VisionMCPPath": VisionMCPPath,
 		"ImageMCPPath": ImageMCPPath, "ImageMCPFiles": ImageMCPFiles,
-		"ToolsMCPPath": ToolsMCPPath, "HubMCPPath": HubMCPPath, "HubMCPAll": HubMCPAll, "provider.RemoteCardsPath": provider.RemoteCardsPath,
+		"PackageMCPPath": PackageMCPPath,
+		"ToolsMCPPath":   ToolsMCPPath, "HubMCPPath": HubMCPPath, "HubMCPAll": HubMCPAll, "provider.RemoteCardsPath": provider.RemoteCardsPath,
 		"provider.RemoteRefreshPath": provider.RemoteRefreshPath,
 	}
 	re := regexp.MustCompile(`mux\.HandleFunc\(((?:"[^"]*"|[A-Za-z.]+)(?:\s*\+\s*(?:"[^"]*"|[A-Za-z.]+))*),`)
