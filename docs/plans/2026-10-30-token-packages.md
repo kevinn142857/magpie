@@ -6,6 +6,33 @@
 
 **Tech Stack:** Existing Go, modernc SQLite, embedded HTML/CSS/JavaScript and Playwright; no new production dependencies.
 
+## Package MCP and independent web-tool allowance
+
+Provide a recipient MCP endpoint at `/mcp/magpie/package`, authenticated with
+the package key. Read-only quota and model discovery do not spend tokens.
+Plain-text generation reuses the complete model restriction, reservation and
+settlement path. Search and public webpage reads spend a separate lifetime
+accepted-call allowance, configured from the same package form or management MCP.
+
+Implementation locations and verification:
+
+1. `internal/tokenpack/mcp_calls.go` and the store migrate old ledgers atomically,
+   preserve token balances, default old packages to zero calls and keep accepted
+   calls durable across failures and restarts. Verify concurrent admission,
+   partial edits, migration, corruption, expiry and unit separation under race.
+2. `internal/gateway/tokenpack_mcp*.go` serves the scoped tools with bounded
+   single-message framing, deadlines, shared memory admission and normalized
+   usage. Search uses only enabled search APIs, with no model fallback. Verify
+   permissions, disabled services, credential rotation, resource limits and zero
+   charges before admission; ordinary MCP clients retain their behavior.
+3. `internal/gui/quota_searches.go` and `assets/quota/searches.js` add search
+   services inside the existing supplier page. The package form and share page
+   show both units, and request logs never present calls as model tokens.
+   Verify five-language Chromium/WebKit behavior and API authentication.
+4. Build the Docker image and use isolated model/search fixtures plus the official
+   MCP SDK to verify model-token usage, call exhaustion, sharing and restart
+   persistence. Run native/Linux/Windows vet and builds and every Go package.
+
 ## Approved scope
 
 - Create a package by name, allowed model IDs, total tokens and optional expiration.

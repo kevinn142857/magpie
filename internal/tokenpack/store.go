@@ -77,6 +77,10 @@ func openDB(create bool) (*sql.DB, error) {
 			return nil, fmt.Errorf("%w: %v", ErrUnavailable, err)
 		}
 	}
+	if err := migrateMCP(db); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("%w: %v", ErrUnavailable, err)
+	}
 	return db, nil
 }
 
@@ -90,13 +94,13 @@ func randomID() (string, error) {
 
 type scanner interface{ Scan(...any) error }
 
-const packColumns = "id,name,models,total,used,reserved,enabled,expires,created,share"
+const packColumns = "id,name,models,total,used,reserved,enabled,expires,created,share,mcp_total,mcp_used"
 
 func scanPack(row scanner) (Pack, error) {
 	var p Pack
 	var models string
 	var expires, created int64
-	if err := row.Scan(&p.ID, &p.Name, &models, &p.TotalTokens, &p.UsedTokens, &p.ReservedTokens, &p.Enabled, &expires, &created, &p.ShareToken); err != nil {
+	if err := row.Scan(&p.ID, &p.Name, &models, &p.TotalTokens, &p.UsedTokens, &p.ReservedTokens, &p.Enabled, &expires, &created, &p.ShareToken, &p.MCPTotalCalls, &p.MCPUsedCalls); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return Pack{}, ErrNotFound
 		}
@@ -115,6 +119,7 @@ func scanPack(row scanner) (Pack, error) {
 		p.ExpiresAt = time.UnixMilli(expires).UTC()
 	}
 	p.RemainingTokens = max(p.TotalTokens-p.UsedTokens-p.ReservedTokens, 0)
+	p.MCPRemainingCalls = max(p.MCPTotalCalls-p.MCPUsedCalls, 0)
 	return p, nil
 }
 
@@ -131,12 +136,20 @@ func credential(p Pack) (Pack, error) {
 // allowance. A failed creation revokes its unreturned key; any orphan is
 // still marked as a package key and cannot bypass its missing ledger entry.
 func Create(name string, models []string, quota int64, expiresAt time.Time) (Pack, error) {
+	return CreateWithMCP(name, models, quota, expiresAt, 0)
+}
+
+// CreateWithMCP creates separate lifetime token and accepted-tool-call quotas.
+func CreateWithMCP(name string, models []string, quota int64, expiresAt time.Time, calls int64) (Pack, error) {
 	name = strings.TrimSpace(name)
 	if name == "" || utf8.RuneCountInString(name) > 120 {
 		return Pack{}, fmt.Errorf("%w: use a package name between 1 and 120 characters", ErrInvalid)
 	}
 	if quota <= 0 || quota > MaxTokens {
 		return Pack{}, fmt.Errorf("%w: token allowance must be a positive exact integer", ErrInvalid)
+	}
+	if calls < 0 || calls > MaxTokens {
+		return Pack{}, fmt.Errorf("%w: MCP call allowance must be a nonnegative exact integer", ErrInvalid)
 	}
 	clean, err := access.CleanModels(models)
 	if err != nil {
@@ -171,7 +184,7 @@ func Create(name string, models []string, quota int64, expiresAt time.Time) (Pac
 	if !expiresAt.IsZero() {
 		expires = expiresAt.UnixMilli()
 	}
-	if _, err := db.Exec(`INSERT INTO token_packs(id,name,models,total,enabled,expires,created,share) VALUES(?,?,?,?,1,?,?,?)`, who.KeyID, name, string(b), quota, expires, now.UnixMilli(), share); err != nil {
+	if _, err := db.Exec(`INSERT INTO token_packs(id,name,models,total,enabled,expires,created,share,mcp_total) VALUES(?,?,?,?,1,?,?,?,?)`, who.KeyID, name, string(b), quota, expires, now.UnixMilli(), share, calls); err != nil {
 		_, revokeErr := access.Update("remove-key", access.Change{Key: who.KeyID})
 		return Pack{}, errors.Join(err, revokeErr)
 	}
@@ -237,11 +250,19 @@ func Update(id string, quota int64, enabled bool) (Pack, error) {
 // transaction. Concurrent allowance and enabled-state edits cannot undo each
 // other. It never reads or exposes the underlying API key.
 func Patch(id string, quota *int64, enabled *bool) (Pack, error) {
-	if quota == nil && enabled == nil {
+	return PatchWithMCP(id, quota, enabled, nil)
+}
+
+// PatchWithMCP atomically edits supplied totals without resetting either usage.
+func PatchWithMCP(id string, quota *int64, enabled *bool, calls *int64) (Pack, error) {
+	if quota == nil && enabled == nil && calls == nil {
 		return Pack{}, fmt.Errorf("%w: supply an allowance or enabled state", ErrInvalid)
 	}
 	if quota != nil && (*quota <= 0 || *quota > MaxTokens) {
 		return Pack{}, fmt.Errorf("%w: token allowance must be a positive exact integer", ErrInvalid)
+	}
+	if calls != nil && (*calls < 0 || *calls > MaxTokens) {
+		return Pack{}, fmt.Errorf("%w: MCP call allowance must be a nonnegative exact integer", ErrInvalid)
 	}
 	db, err := openDB(false)
 	if err != nil {
@@ -266,10 +287,17 @@ func Patch(id string, quota *int64, enabled *bool) (Pack, error) {
 	if enabled != nil {
 		p.Enabled = *enabled
 	}
-	if _, err := tx.Exec("UPDATE token_packs SET total=?,enabled=? WHERE id=?", p.TotalTokens, p.Enabled, id); err != nil {
+	if calls != nil {
+		if *calls < p.MCPUsedCalls {
+			return Pack{}, fmt.Errorf("%w: MCP allowance is below accepted tool calls", ErrConflict)
+		}
+		p.MCPTotalCalls = *calls
+	}
+	if _, err := tx.Exec("UPDATE token_packs SET total=?,enabled=?,mcp_total=? WHERE id=?", p.TotalTokens, p.Enabled, p.MCPTotalCalls, id); err != nil {
 		return Pack{}, err
 	}
 	p.RemainingTokens = max(p.TotalTokens-p.UsedTokens-p.ReservedTokens, 0)
+	p.MCPRemainingCalls = max(p.MCPTotalCalls-p.MCPUsedCalls, 0)
 	if err := tx.Commit(); err != nil {
 		return Pack{}, err
 	}

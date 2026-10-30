@@ -2,7 +2,6 @@ package gateway
 
 import (
 	"fmt"
-	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -22,22 +21,21 @@ func TestUnroutedHeldReportSaved(t *testing.T) {
 	unroutedLimits(t, 50*time.Millisecond, time.Second)
 	s, _ := slowEyed(t, 0)
 	heldSight(t, s)
-	srv := httptest.NewServer(s.Handler())
-	t.Cleanup(srv.Close)
 
 	const secret = "hunter2-held-report-secret"
 	body := strings.Replace(pastedImage, `"text":"read"`, `"text":"`+secret+`"`, 1)
-	c := &http.Client{Timeout: 20 * time.Second}
-	resp, err := c.Post(srv.URL+"/v1/chat/completions", "application/json", strings.NewReader(body))
-	if err != nil {
-		t.Fatal(err)
+	// A TCP client can close after the flushed 504's EOF, canceling the
+	// request and ending its wait before the report snapshots it. Keep this
+	// fixture held until giveUp's own cancellation, which follows the snapshot.
+	r := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(body))
+	r.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, r)
+	b := w.Body.String()
+	if w.Code != http.StatusGatewayTimeout {
+		t.Fatalf("held request answered %d %s", w.Code, b)
 	}
-	b, _ := io.ReadAll(resp.Body)
-	resp.Body.Close()
-	if resp.StatusCode != http.StatusGatewayTimeout {
-		t.Fatalf("held request answered %d %s", resp.StatusCode, b)
-	}
-	if !strings.Contains(string(b), "Copy Report") || !strings.Contains(string(b), "Routing page") || strings.Contains(string(b), "magpie's log") {
+	if !strings.Contains(b, "Copy Report") || !strings.Contains(b, "Routing page") || strings.Contains(b, "magpie's log") {
 		t.Fatalf("the 504 doesn't send its user to the report: %s", b)
 	}
 

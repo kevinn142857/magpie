@@ -1,7 +1,7 @@
 # Docker 部署与 Token 套餐
 
 此 fork 在 Magpie 原有网关上提供简化面板：**额度概览、供应商接入、额度管理、日志**。
-创建套餐时填写名称、允许模型和 Token 额度，生成独立 API Key 与分享链接。
+创建套餐时填写名称、允许模型、Token 总额度和可选的搜索/网页读取次数，生成独立 API Key 与分享链接。
 接收者打开链接即可复制请求地址、Key 和模型；无需进入管理面板。
 
 ## 构建与启动
@@ -91,6 +91,29 @@ docker compose exec magpie magpie providers
 保存后刷新套餐模型列表即可选择新模型。上游 Key 留在数据卷中，
 套餐使用另行生成的网关 Key。
 
+## 接入搜索服务与分配次数
+
+“供应商接入”页下方提供“搜索服务”，无需新增页面或使用 CLI。
+点击“接入搜索服务”，选择 Tavily、Brave Search、Exa、Firecrawl、You.com、
+DeepSeek 或 SearXNG；选择后会填入默认地址，SearXNG 需要填写自建地址，支持私网 HTTP。
+填写服务需要的 API Key 后保存；仅在对应服务允许时可以不填 Key。
+只有 `web_search` 需要接入搜索服务；`web_fetch` 直接读取公开网页，不依赖搜索供应商。
+搜索服务可编辑、启用或停用，保存立即生效。保存后的原始 Key 不回显，
+同一完整地址留空 Key 才会沿用已有凭证；更换地址且原本配置了 Key 时必须重新填写。
+复杂多 Key 或高级配置在简化面板中只读，避免丢失配置。
+
+套餐的“搜索与网页读取次数”与模型 Token 完全独立；填写的是**总次数**，不是本次追加值。
+默认 `0` 表示不包含搜索与网页读取，仍然可以使用套餐的模型 MCP。
+例如设置 `1M` Token 和 `100` 次：生成文本只扣 Token，搜索或读取网页只扣次数。
+两种额度都不会定期重置；次数耗尽时模型调用仍按自己的 Token 余额处理。
+
+每次通过语法、套餐权限与必要服务检查后、被接受执行的 `web_search` 或 `web_fetch` 调用
+原子扣除 **1 次**，
+不会按内部请求数、供应商回退次数或结果条数重复扣次，也不折算为 Token。参数校验失败不扣次；
+服务或网络失败、超时或执行中的公开网址检查拒绝不退次；
+进程中断和容器重启也不会恢复已扣次数。
+请求日志会明确显示工具名与“1 次”，不能对次数记录执行 Token 核销。
+
 ## 通过 MCP 管理（可选）
 
 管理 MCP 的地址为 `http://127.0.0.1:3430/api/mcp`，使用独立的
@@ -144,16 +167,80 @@ claude mcp add --transport http magpie-admin http://127.0.0.1:3430/api/mcp \
 | `list_request_logs` / `settle_token_request` | 查询请求日志、核销已确认的实际用量 |
 
 供应商改地址或协议时仍需重新提供上游 Key，核销仍需确认请求实际用量。
-此接口不启用套餐 Key 对 Magpie 原有搜索 MCP 的访问；套餐 Key 不能管理供应商或额度。
+管理员 MCP 与下方的套餐 MCP 使用不同入口、凭证与权限。
+套餐 Key 不能管理供应商、修改额度或核销请求。
+
+## 套餐接收者通过 MCP 使用模型和工具
+
+套餐分享页提供“MCP 接入”卡片，包含完整地址和可复制的 JSON 配置。
+套餐 MCP 使用该套餐自己的 API Key，不需要管理员的网页或 MCP 凭证：
+
+```json
+{
+  "mcpServers": {
+    "magpie-package": {
+      "type": "http",
+      "url": "https://api.example.com/mcp/magpie/package",
+      "headers": {
+        "Authorization": "Bearer <套餐 API Key>"
+      }
+    }
+  }
+}
+```
+
+推荐直接复制分享页中的配置，地址和 Key 会自动填好。
+支持 HTTP MCP 和请求头配置的客户端可以使用此结构，具体配置文件位置由客户端决定。
+Claude Code 也可以直接添加：
+
+```sh
+claude mcp add --transport http magpie-package \
+  https://api.example.com/mcp/magpie/package \
+  --header 'Authorization: Bearer <套餐 API Key>'
+```
+
+套餐 MCP 始终提供前三个模型工具；分配了大于零的搜索/网页读取总次数后，另提供两个计次工具：
+
+| 工具 | 用途 | 额度 |
+| --- | --- | --- |
+| `get_quota` | 查看此套餐总额度、已用、剩余、预留和有效期 | 只读，不消耗模型 Token |
+| `list_models` | 查看此套餐允许使用的模型 | 只读，不消耗模型 Token |
+| `generate_text` | 使用允许的模型生成文本 | 与模型 API 共用同一套餐 Token 余额 |
+| `web_search` | 搜索网页 | 每次接受的工具调用扣 1 次 |
+| `web_fetch` | 读取网页 | 每次接受的工具调用扣 1 次 |
+
+`generate_text` 接收 `model`、`prompt`，可选 `system` 和 `maxTokens`；
+未指定输出上限时默认 `4096`。从 `list_models` 返回的模型中选择，
+不要填写套餐之外的模型。结果中的 `usage.complete` 表示本次用量是否完整并完成结算；
+用量不完整时保留预留额度，由管理员核对后核销，不按零消耗释放。
+`get_quota` 的 `expiresAt` 为 `null` 时表示没有设置到期时间。
+
+套餐 MCP 每个 POST 只接受一条 JSON-RPC 请求，不接受批量调用。
+请求 JSON 最多 64 KiB；生成等待最多 60 秒；上游读取和完整 MCP 响应均限制为 4 MiB。
+模型已完成且用量已确认的调用会正常记账，即使其答案过大而无法返回；
+读取途中超限或用量不完整则保留预留额度。可通过缩短提示或减小 `maxTokens` 控制回答长度。
+
+套餐 MCP 使用无状态 Streamable HTTP，只接受 POST，不建立 Session，
+不提供 GET/SSE 常驻通知流；支持 `2025-11-25`、`2025-06-18`、`2025-03-26`。
+使用与初始化时期协议兼容的客户端；固定要求原生 2026 协议的客户端暂不支持。
+套餐的停用、到期、模型白名单和总额度约束在 MCP 调用中同样生效。
+已有使用搜索 MCP 地址的客户端，也可以使用套餐 Key 连接
+`https://api.example.com/mcp/magpie/web-search`；该入口要求套餐配置过正数调用总额度，
+与专用套餐 MCP 共用同一份调用次数，不提供额外免费额度。
+
+此入口只开放表中授权能力，不向套餐持有者转发管理员 MCP、插件、Library Hub
+或已登录的第三方 MCP。图片生成等其他能力不包含在此套餐入口内。
+分享页会分别显示 Token 与次数余额，并根据套餐的次数额度显示可用工具。
 
 ## 创建和分享套餐
 
-1. 在“额度管理”创建套餐，填写名称、允许模型、Token 额度和可选有效期。
+1. 在“额度管理”创建套餐，填写名称、允许模型、Token 总额度、搜索与网页读取总次数及可选有效期。
 2. `1M` 表示 `1,000,000` 个 Token。套餐总额度用完不会按天或按月自动补满。
 3. 复制生成的分享链接，发给接收者。持有链接的人可读取该套餐的 API Key。
    链接格式为 `https://api.example.com/share/<随机字符串>`，与管理员登录链接无关。
 4. 接收者打开页面，复制协议对应的请求地址、Key 和模型到客户端。
    OpenAI 接口的 Base URL 为对外地址加 `/v1`；Anthropic 接口使用对外根地址。
+   使用 MCP 的接收者可以直接复制页面“MCP 接入”卡片中的套餐配置。
 5. 在“额度概览”查看用量，在“日志”查看请求记录；需要停止新请求时停用套餐。
 
 管理员登录凭证 `MAGPIE_WEB_KEY` 与套餐的 API Key、分享链接是不同的凭证。
@@ -166,8 +253,11 @@ claude mcp add --transport http magpie-admin http://127.0.0.1:3430/api/mcp \
 OpenAI Responses、Anthropic Messages、Gemini GenerateContent（含流式响应）。
 流式调用使用 HTTP/SSE；套餐 Key 暂不开放 WebSocket。
 Codex 连接此网关时，应在模型供应商配置中设置 `supports_websockets = false`。
-`count_tokens`（包括 Gemini 的 `countTokens`）、MCP、图片、音频、嵌入及其他工具接口
-暂不向套餐 Key 开放；这些请求会被拒绝，不扣除套餐额度。
+套餐 MCP 的模型能力及获授权的计次工具通过专用 `/mcp/magpie/package` 入口开放。
+`count_tokens`（包括 Gemini 的 `countTokens`）、原有通用搜索/图片/插件/Hub MCP、
+图片、音频、嵌入及其他工具接口暂不向套餐 Key 开放；这些请求会被拒绝，不扣除套餐额度。
+套餐模型 API 同样拒绝服务端搜索、代码执行、托管 MCP 等需要额外权限或独立费用的工具声明；
+普通 function/custom 工具仍由客户端执行，不受此限制。
 依赖 `count_tokens` 预估用量的客户端可能需要关闭预估，或改用兼容的客户端；
 这不会关闭实际请求的 Token 记账。
 首版套餐请求解压后的 JSON 请求体上限为 1 MiB（1,048,576 字节），
@@ -179,7 +269,7 @@ Codex 连接此网关时，应在模型供应商配置中设置 `supports_websoc
 每次消耗为归一化后的输入、输出、缓存读取和缓存写入 Token 之和；这四项互斥，
 上游报告的推理 Token 包含在输出中，不再重复累加。
 
-为防止并发请求重复花费同一余额，**每个套餐同时只处理一个请求**。
+为防止并发请求重复花费同一余额，**每个套餐同时只处理一个模型请求**。
 请求开始前持久化预留该套餐全部剩余额度，并根据保守的输入估计限制输出长度。
 请求完整结束且获得 usage 后，按实际 Token 结算并释放差额。
 不同套餐可以同时使用。

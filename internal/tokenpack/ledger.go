@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -44,7 +45,7 @@ func RecordRefusal(id, model, endpoint string, statusCode int, reason error) err
 	case errors.Is(reason, ErrModel):
 		message = "Requested model is outside this package."
 	case errors.Is(reason, ErrUnsupported):
-		message = "Operation is outside this package's supported text APIs."
+		message = "Operation is outside this package's supported model and MCP APIs."
 	case errors.Is(reason, ErrInvalid):
 		message = "Invalid request; provider was not contacted."
 	}
@@ -59,7 +60,7 @@ func RecordRefusal(id, model, endpoint string, statusCode int, reason error) err
 
 func safeEndpoint(path string) string {
 	switch path {
-	case "/v1/chat/completions", "/chat/completions", "/v1/responses", "/responses", "/v1/messages", "/messages", "/v1/models", "/models", "/v1beta/models":
+	case "/v1/chat/completions", "/chat/completions", "/v1/responses", "/responses", "/v1/messages", "/messages", "/v1/models", "/models", "/v1beta/models", "/mcp/magpie/package":
 		return path
 	}
 	if strings.HasPrefix(path, "/v1beta/models/") {
@@ -83,7 +84,7 @@ var executing sync.Map
 func executionID(id string) string { return Path() + "\x00" + id }
 
 func scanLog(row scanner) (Log, error) {
-	var l Log
+	l := Log{Unit: "tokens"}
 	var created, completed int64
 	if err := row.Scan(&l.ID, &l.PackID, &created, &completed, &l.Model, &l.Endpoint, &l.StatusCode, &l.TotalTokens, &l.ReservedTokens, &l.Outcome, &l.Message); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -123,7 +124,27 @@ func Logs(id string, limit int) ([]Log, error) {
 		}
 		out = append(out, l)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	tools, err := mcpLogs(db, id, limit)
+	if err != nil {
+		return nil, err
+	}
+	out = append(out, tools...)
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].CreatedAt.Equal(out[j].CreatedAt) {
+			return out[i].ID < out[j].ID
+		}
+		return out[i].CreatedAt.After(out[j].CreatedAt)
+	})
+	if len(out) > limit {
+		out = out[:limit]
+	}
+	return out, nil
 }
 
 // Reserve holds all currently available tokens before contacting an upstream.

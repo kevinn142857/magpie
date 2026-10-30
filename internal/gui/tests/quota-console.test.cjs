@@ -1,6 +1,7 @@
 const assert = require("node:assert/strict");
 const fs = require("node:fs/promises");
 const path = require("node:path");
+const vm = require("node:vm");
 const { test, after } = require("node:test");
 const { chromium, webkit } = require("playwright");
 
@@ -19,13 +20,30 @@ const labels = {
   de: ["Übersicht", "Token-Pakete", "Anfrageprotokoll", "Anbieter"],
 };
 
+test("quota console messages include all five languages and resolve every literal key", async () => {
+  const source = await fs.readFile(path.join(assets, "i18n.js"), "utf8");
+  const words = vm.runInNewContext(`${source}; quotaWords`, { navigator: { language: "en" } });
+  for (const [key, translations] of Object.entries(words)) {
+    assert.equal(translations.length, 5, key);
+    assert.ok(translations.every((text) => typeof text === "string" && text.length > 0), key);
+  }
+  for (const filename of ["app.js", "providers.js", "searches.js", "index.html"]) {
+    const script = await fs.readFile(path.join(assets, filename), "utf8");
+    for (const match of script.matchAll(/quotaT\("([\w]+)"|data-i18n(?:-label)?="([\w]+)"/g)) {
+      assert.ok(words[match[1] || match[2]], `${filename}: ${match[1] || match[2]}`);
+    }
+  }
+});
+
 async function fixture(page, options = {}) {
   const state = {
     packs: [{ id: "one", name: "Research", models: ["openai/research"], totalTokens: 1000000,
       usedTokens: 250000, reservedTokens: 1200, remainingTokens: 748800, enabled: true,
+      mcpTotalCalls: 100, mcpUsedCalls: 7, mcpRemainingCalls: 93,
       createdAt: "2026-10-30T02:00:00Z", shareURL: "http://magpie.test/share/fixture-token" }],
     providers: options.emptyProviders ? [] : [{ id: "openai", name: "Research provider", protocol: "chat", baseURL: "https://research.example/v1", models: ["research"], enabled: true, keyConfigured: true, keyMasked: "••••cret" }],
-    events: [], providerEvents: [], logsQueries: [], failed: false, providerFailed: false, probeWait: null,
+    searches: options.emptySearches ? [] : [{ vendor: "tavily", name: "Tavily", baseURL: "https://api.tavily.com", enabled: true, keyConfigured: true, keyMasked: "••••cret", editable: !options.searchReadOnly, unsupportedReason: options.searchReadOnly ? "Multiple keys are configured." : undefined }],
+    events: [], providerEvents: [], searchEvents: [], logsQueries: [], failed: false, providerFailed: false, searchFailed: false, searchWait: null, probeWait: null,
   };
   if (options.emptyPacks) state.packs = [];
   if (options.providerReadOnly) Object.assign(state.providers[0], { editable: false, unsupportedReason: "Multiple protocol endpoints are configured." });
@@ -35,6 +53,22 @@ async function fixture(page, options = {}) {
   });
   await page.route("**/*", async (route) => {
     const req = route.request(), url = new URL(req.url()), p = url.pathname;
+    if (p.startsWith("/api/quota-searches")) {
+      if (state.searchFailed) return route.fulfill({ status: 503, json: { error: "Search service unavailable" } });
+      const vendors = ["tavily", "brave", "exa", "firecrawl", "you", "deepseek", "searxng"].map((id) => ({ id, name: id === "tavily" ? "Tavily" : id, baseURL: id === "searxng" ? "" : `https://api.${id}.com`, keyOptional: id === "searxng" }));
+      if (req.method() === "GET") return route.fulfill({ json: { searches: state.searches, vendors } });
+      const body = req.postDataJSON();
+      state.searchEvents.push({ method: req.method(), path: p, body });
+      if (state.searchWait) await state.searchWait;
+      let search = state.searches.find((item) => item.vendor === (body.vendor || p.split("/").at(-1)));
+      if (!search) {
+        search = { vendor: body.vendor, name: vendors.find((item) => item.id === body.vendor).name, enabled: true, editable: true };
+        state.searches.push(search);
+      }
+      for (const field of ["baseURL", "enabled"]) if (field in body) search[field] = body[field];
+      if (body.apiKey) Object.assign(search, { keyConfigured: true, keyMasked: "••••cret" });
+      return route.fulfill({ json: { search } });
+    }
     if (p.startsWith("/api/quota-providers")) {
       if (state.providerFailed) return route.fulfill({ status: 503, json: { error: "Provider unavailable" } });
       if (p === "/api/quota-providers" && req.method() === "GET") return route.fulfill({ json: { providers: state.providers } });
@@ -62,6 +96,8 @@ async function fixture(page, options = {}) {
         state.logsQueries.push(url.searchParams.get("pack") || "");
         return route.fulfill({ json: { logs: [{ id: "log-1", packId: "one", packName: "Research", model: "openai/research",
           tokens: options.outcome ? 0 : 250, status: options.statusCode ? String(options.statusCode) : options.outcome || "completed", outcome: options.outcome,
+          source: options.mcpLog ? "mcp" : "api", tool: options.mcpLog ? "generate_text" : undefined,
+          ...(options.callLog ? { unit: "calls", calls: 1, tool: "web_search", model: "", source: "mcp" } : {}),
           message: "private upstream body", createdAt: "2026-10-30T03:00:00Z", durationMs: 730 }] } });
       }
       if (p === "/api/token-packs" && req.method() === "GET") return route.fulfill({ json: { packs: state.packs, baseURL: "http://magpie.test/v1" } });
@@ -79,6 +115,7 @@ async function fixture(page, options = {}) {
       const pack = state.packs.find((x) => x.id === p.split("/").at(-1));
       Object.assign(pack, body);
       pack.remainingTokens = Math.max(0, pack.totalTokens - pack.usedTokens - (pack.reservedTokens || 0));
+      pack.mcpRemainingCalls = Math.max(0, (pack.mcpTotalCalls || 0) - (pack.mcpUsedCalls || 0));
       return route.fulfill({ json: { pack } });
     }
     if (p === "/" || p.startsWith("/quota/")) {
@@ -235,6 +272,17 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
     assert.equal(await page.locator('[data-stat="remainingTokens"]').getAttribute("data-value"), "748800");
   });
 
+  test(`${engine}: package MCP requests are labeled in the same request log`, async (t) => {
+    const browser = await browserFor(engine), page = await browser.newPage();
+    t.after(() => page.close());
+    await fixture(page, { mcpLog: true });
+    await page.goto("http://magpie.test/");
+    await page.locator('nav [data-view="logs"]').click();
+    await page.locator("#log-list .mcp-source").waitFor();
+    assert.equal(await page.locator("#log-list .mcp-source").textContent(), "MCP");
+    assert.match(await page.locator("#log-list").textContent(), /openai\/research/);
+  });
+
   test(`${engine}: failed logs show the HTTP status without upstream response bodies`, async (t) => {
     const browser = await browserFor(engine);
     const context = await browser.newContext({ locale: "zh" });
@@ -365,6 +413,137 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
     await page.keyboard.press("Escape");
     await page.locator("#provider-dialog").waitFor({ state: "hidden" });
     assert.equal(await page.getByLabel("API Key", { exact: true }).inputValue(), "");
+  });
+
+  test(`${engine}: independent search call quota edits only the changed total`, async (t) => {
+    const context = await (await browserFor(engine)).newContext({ locale: "zh" });
+    t.after(() => context.close());
+    const page = await context.newPage();
+    const state = await fixture(page);
+    await page.goto("http://magpie.test/");
+    await page.locator("#overview-list").getByText(/剩余 93 次/).waitFor();
+    await page.getByRole("button", { name: "额度管理", exact: true }).click();
+    await page.locator("#package-list").getByRole("button", { name: "调整额度", exact: true }).click();
+    const input = page.getByLabel("搜索与网页读取次数", { exact: true });
+    assert.equal(await input.inputValue(), "100");
+    await input.fill("3.5");
+    await page.getByRole("button", { name: "保存额度", exact: true }).click();
+    assert.equal(state.events.length, 0);
+    await input.fill("200");
+    await page.getByRole("button", { name: "保存额度", exact: true }).click();
+    await page.locator("#pack-dialog").waitFor({ state: "hidden" });
+    assert.deepEqual(state.events.at(-1).body, { mcpTotalCalls: 200 });
+    await page.locator("#package-list").getByText(/剩余 193 次/).waitFor();
+  });
+
+  test(`${engine}: create includes a separate search budget and accepts zero calls`, async (t) => {
+    const context = await (await browserFor(engine)).newContext({ locale: "zh" });
+    t.after(() => context.close());
+    const page = await context.newPage();
+    const state = await fixture(page);
+    await page.goto("http://magpie.test/");
+    await page.locator(".create-pack").first().click();
+    await page.getByLabel("套餐名称", { exact: true }).fill("Model only");
+    await page.getByRole("checkbox", { name: "Research model" }).check();
+    assert.equal(await page.getByLabel("搜索与网页读取次数", { exact: true }).inputValue(), "0");
+    await page.locator("#submit-pack").click();
+    await page.locator("#pack-dialog").waitFor({ state: "hidden" });
+    assert.equal(state.events.at(-1).body.mcpTotalCalls, 0);
+  });
+
+  test(`${engine}: search logs show calls and cannot be settled as tokens`, async (t) => {
+    const context = await (await browserFor(engine)).newContext({ locale: "zh" });
+    t.after(() => context.close());
+    const page = await context.newPage();
+    await fixture(page, { callLog: true, outcome: "pending" });
+    await page.goto("http://magpie.test/");
+    await page.getByRole("button", { name: "请求日志", exact: true }).click();
+    await page.locator("#log-list td").filter({ hasText: "web_search" }).waitFor();
+    assert.match(await page.locator("#log-list").textContent(), /1 次/);
+    assert.equal(await page.locator("#log-list .settle-button").count(), 0);
+    assert.equal(await page.locator("#log-list .mcp-source").count(), 1);
+  });
+
+  test(`${engine}: search service CRUD keeps saved keys private and rejects reuse at a changed URL`, async (t) => {
+    const context = await (await browserFor(engine)).newContext({ locale: "zh" });
+    t.after(() => context.close());
+    const page = await context.newPage();
+    const state = await fixture(page, { emptySearches: true });
+    await page.goto("http://magpie.test/");
+    await page.getByRole("button", { name: "供应商接入", exact: true }).click();
+    await page.getByRole("button", { name: "接入搜索服务", exact: true }).click();
+    await page.getByRole("button", { name: "搜索服务类型", exact: true }).click();
+    assert.equal(await page.locator("#search-vendor-menu [role=menuitemradio]").count(), 7);
+    await page.getByRole("menuitemradio", { name: "Tavily", exact: true }).click();
+    assert.equal(await page.getByLabel("搜索服务地址", { exact: true }).inputValue(), "https://api.tavily.com");
+    await page.locator("#search-key").fill("new-search-secret");
+    await page.getByRole("button", { name: "保存搜索服务", exact: true }).click();
+    await page.locator("#search-dialog").waitFor({ state: "hidden" });
+    const row = page.locator("[data-search-vendor=tavily]");
+    await row.getByRole("button", { name: "编辑搜索服务", exact: true }).click();
+    assert.equal(await page.locator("#search-key").inputValue(), "");
+    assert.doesNotMatch(await page.locator("#view-providers").textContent(), /new-search-secret/);
+    await page.getByLabel("搜索服务地址", { exact: true }).fill("https://other.example/search");
+    await page.getByRole("button", { name: "保存搜索服务", exact: true }).click();
+    assert.equal(state.searchEvents.length, 1, "saved keys cannot move to a new host");
+    await page.locator("#search-key").fill("replacement-secret");
+    await page.getByRole("button", { name: "保存搜索服务", exact: true }).click();
+    await page.locator("#search-dialog").waitFor({ state: "hidden" });
+    assert.deepEqual(state.searchEvents.at(-1).body, { baseURL: "https://other.example/search", apiKey: "replacement-secret" });
+    const savedEvents = state.searchEvents.length;
+    await row.getByRole("button", { name: "编辑搜索服务", exact: true }).click();
+    assert.equal(await page.locator("#search-key").inputValue(), "");
+    await page.getByLabel("搜索服务地址", { exact: true }).fill("https://other.example/search/");
+    await page.getByRole("button", { name: "保存搜索服务", exact: true }).click();
+    await page.locator("#search-dialog").waitFor({ state: "hidden" });
+    assert.equal(state.searchEvents.length, savedEvents, "the unchanged normalized address keeps its key without resubmitting it");
+    await row.getByRole("button", { name: "停用搜索服务", exact: true }).click();
+    await row.getByRole("button", { name: "启用搜索服务", exact: true }).waitFor();
+    assert.deepEqual(state.searchEvents.at(-1).body, { enabled: false });
+    assert.equal(await page.locator("nav [data-view]").count(), 4);
+  });
+
+  test(`${engine}: search service retry, busy state and no-key local SearXNG`, async (t) => {
+    const context = await (await browserFor(engine)).newContext({ locale: "zh", viewport: { width: 390, height: 844 } });
+    t.after(() => context.close());
+    const page = await context.newPage();
+    const state = await fixture(page, { emptySearches: true });
+    await page.goto("http://magpie.test/");
+    await page.getByRole("button", { name: "供应商接入", exact: true }).click();
+    await page.getByRole("button", { name: "接入搜索服务", exact: true }).click();
+    await page.getByRole("button", { name: "搜索服务类型", exact: true }).click();
+    await page.getByRole("menuitemradio", { name: "searxng", exact: true }).click();
+    assert.equal(await page.getByLabel("搜索服务地址", { exact: true }).inputValue(), "");
+    await page.getByLabel("搜索服务地址", { exact: true }).fill("http://search.local:8080");
+    state.searchFailed = true;
+    await page.getByRole("button", { name: "保存搜索服务", exact: true }).click();
+    await page.locator("#search-form-error").getByText("Search service unavailable").waitFor();
+    state.searchFailed = false;
+    let release;
+    state.searchWait = new Promise((resolve) => { release = resolve; });
+    await page.getByRole("button", { name: "保存搜索服务", exact: true }).click();
+    assert.equal(await page.locator("#save-search").isDisabled(), true);
+    await page.keyboard.press("Escape");
+    assert.equal(await page.locator("#search-dialog").isVisible(), true);
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
+    release();
+    await page.locator("#search-dialog").waitFor({ state: "hidden" });
+    assert.equal(state.searchEvents.at(-1).body.apiKey, undefined);
+  });
+
+  test(`${engine}: complex search services are readonly`, async (t) => {
+    const context = await (await browserFor(engine)).newContext({ locale: "zh" });
+    t.after(() => context.close());
+    const page = await context.newPage();
+    const state = await fixture(page, { searchReadOnly: true });
+    await page.goto("http://magpie.test/");
+    await page.getByRole("button", { name: "供应商接入", exact: true }).click();
+    const row = page.locator("[data-search-vendor=tavily]");
+    await row.waitFor();
+    assert.equal(await row.getByRole("button", { name: "编辑搜索服务", exact: true }).isDisabled(), true);
+    assert.equal(await row.getByRole("button", { name: "停用搜索服务", exact: true }).isDisabled(), true);
+    assert.match(await row.textContent(), /Multiple keys/);
+    assert.equal(state.searchEvents.length, 0);
   });
 
   test(`${engine}: complex providers remain visible and cannot be overwritten from the small panel`, async (t) => {

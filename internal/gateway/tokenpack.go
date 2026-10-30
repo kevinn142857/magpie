@@ -34,9 +34,10 @@ var tokenPackReaders sync.Map
 // the package ledger. Each actual upstream attempt is included once.
 type packUsage struct {
 	sync.Mutex
-	seen, unknown bool
-	stream        bool
-	tokens        int64
+	seen, unknown                        bool
+	stream                               bool
+	tokens                               int64
+	input, output, cacheRead, cacheWrite int64
 }
 
 func recordTokenPackUsage(r *http.Request, rec usage.Record) {
@@ -64,6 +65,10 @@ func recordTokenPackUsage(r *http.Request, rec usage.Record) {
 		return
 	}
 	u.tokens += n
+	u.input += int64(rec.Input)
+	u.output += int64(rec.Output)
+	u.cacheRead += int64(rec.CacheRead)
+	u.cacheWrite += int64(rec.CacheWrite)
 	// Normalized records cannot distinguish an omitted count from an explicit
 	// zero. Hold the allowance in either case instead of inventing free tokens.
 	if rec.CacheUnknown || n-int64(rec.Output) == 0 || rec.Output == 0 || rec.Status >= 400 || rec.Error != "" || (u.stream && rec.Stop == "") {
@@ -131,6 +136,10 @@ func (s *Server) tokenPackLimited(next http.Handler) http.Handler {
 		// changes the gateway key's copy of its allow-list.
 		who.Models = p.Models
 		r = r.WithContext(access.WithIdentity(r.Context(), who))
+		if r.URL.Path == PackageMCPPath || (r.URL.Path == SearchMCPPath && p.MCPTotalCalls > 0) {
+			next.ServeHTTP(w, r)
+			return
+		}
 		if r.Method == http.MethodGet && packCatalog(r.URL.Path) {
 			next.ServeHTTP(w, r)
 			return
@@ -196,7 +205,7 @@ func (s *Server) tokenPackLimited(next http.Handler) http.Handler {
 		if strings.HasPrefix(r.URL.Path, "/v1beta/models/") {
 			model, _, _ = strings.Cut(strings.TrimPrefix(r.URL.Path, "/v1beta/models/"), ":")
 		}
-		reservation, err := tokenpack.Reserve(p.ID, model, r.URL.Path, time.Now())
+		reservation, err := tokenpack.Reserve(p.ID, model, tokenPackEndpoint(r), time.Now())
 		if err != nil {
 			packRefused(w, r, model, err)
 			return
@@ -210,10 +219,19 @@ func (s *Server) tokenPackLimited(next http.Handler) http.Handler {
 			if u.stream && (out.sniff == nil || !out.sniff.whole() || out.sniff.failed != "") {
 				certain = false
 			}
+			report, _ := r.Context().Value(packageMCPReportKey{}).(*packageMCPReport)
+			if report != nil {
+				certain = certain && !report.OverLimit.Load()
+				report.Usage = packageMCPUsage{Input: u.input, Output: u.output, CacheRead: u.cacheRead, CacheWrite: u.cacheWrite, Total: tokens}
+			}
 			u.Unlock()
-			if _, err := tokenpack.Complete(reservation.ID, tokens, out.status, certain); err != nil {
+			entry, err := tokenpack.Complete(reservation.ID, tokens, out.status, certain)
+			if err != nil {
 				// A failed settlement keeps its original durable reservation.
 				log.Print("token package settlement failed; reservation retained")
+			}
+			if report != nil {
+				report.Usage.Complete = err == nil && entry.Outcome == "settled"
 			}
 		}()
 		prepared, stream, err := packBody(body, fields, r.URL.Path, reservation.Tokens)
@@ -256,6 +274,9 @@ func packBody(original []byte, fields map[string]json.RawMessage, path string, r
 	}
 	if packMultimodal(shape) {
 		return nil, false, errors.New("token packages currently accept text inputs only")
+	}
+	if packServerTools(shape) {
+		return nil, false, errors.New("token packages do not include server-side search or paid tools")
 	}
 	room := remaining - int64(len(original))*2 - 128
 	if room <= 0 {
@@ -320,6 +341,71 @@ func packBody(original []byte, fields map[string]json.RawMessage, path string, r
 	return prepared, stream, err
 }
 
+// Client function/custom declarations return calls to the client. Every other
+// tool may spend a vendor's separate allowance or invoke an administrator's
+// configured service, neither of which is represented by a token-only package.
+func packServerTools(v any) bool {
+	switch x := v.(type) {
+	case map[string]any:
+		for key, value := range x {
+			if key == "parameters" || key == "input_schema" || key == "parametersJsonSchema" {
+				continue // JSON Schema properties are data, not active tools.
+			}
+			switch key {
+			case "web_search_options", "webSearchOptions", "search_parameters", "searchParameters":
+				if value != nil {
+					return true
+				}
+			case "enable_search", "enableSearch":
+				if value != nil && value != false {
+					return true
+				}
+			case "plugins":
+				if list, ok := value.([]any); value != nil && (!ok || len(list) != 0) {
+					return true
+				}
+			case "tools", "additional_tools":
+				if value == nil {
+					continue
+				}
+				tools, ok := value.([]any)
+				if !ok {
+					return true
+				}
+				for _, raw := range tools {
+					tool, ok := raw.(map[string]any)
+					if !ok {
+						return true
+					}
+					if kind, typed := tool["type"]; typed {
+						if kind != "function" && kind != "custom" {
+							return true
+						}
+						continue
+					}
+					if name, ok := tool["name"].(string); ok && name != "" && tool["input_schema"] != nil {
+						continue // Anthropic's ordinary client tool.
+					}
+					if len(tool) == 1 && (tool["functionDeclarations"] != nil || tool["function_declarations"] != nil) {
+						continue // Gemini's ordinary client functions.
+					}
+					return true
+				}
+			}
+			if packServerTools(value) {
+				return true
+			}
+		}
+	case []any:
+		for _, value := range x {
+			if packServerTools(value) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func packMultimodal(v any) bool {
 	switch x := v.(type) {
 	case map[string]any:
@@ -379,7 +465,7 @@ func packRefused(w http.ResponseWriter, r *http.Request, model string, err error
 	case errors.Is(err, tokenpack.ErrModel):
 		status, message = http.StatusForbidden, "model is outside this package"
 	case errors.Is(err, tokenpack.ErrUnsupported):
-		status, message = http.StatusForbidden, "token packages support text generation and model listing only"
+		status, message = http.StatusForbidden, "token packages support approved model APIs and scoped MCP only"
 	}
 	recordPackRefusal(r, model, status, err)
 	w.Header().Set("X-Should-Retry", "false")
@@ -388,7 +474,14 @@ func packRefused(w http.ResponseWriter, r *http.Request, model string, err error
 
 func recordPackRefusal(r *http.Request, model string, status int, reason error) {
 	id := access.Caller(r.Context()).KeyID
-	if err := tokenpack.RecordRefusal(id, model, r.URL.Path, status, reason); err != nil {
+	if err := tokenpack.RecordRefusal(id, model, tokenPackEndpoint(r), status, reason); err != nil {
 		log.Print("token package refusal could not be recorded; no request was sent")
 	}
+}
+
+func tokenPackEndpoint(r *http.Request) string {
+	if report, _ := r.Context().Value(packageMCPReportKey{}).(*packageMCPReport); report != nil {
+		return PackageMCPPath
+	}
+	return r.URL.Path
 }

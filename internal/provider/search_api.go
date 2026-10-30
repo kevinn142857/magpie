@@ -184,7 +184,40 @@ func SearchAPIsSet() (int, error) {
 }
 
 // StoredSearchAPIs are the search APIs as saved, keys and all.
-func StoredSearchAPIs() []SearchAPI { return load().Searches }
+func StoredSearchAPIs() []SearchAPI {
+	as, _ := StoredSearchAPIsChecked()
+	return as
+}
+
+// StoredSearchAPIsChecked reads saved search APIs without treating an unreadable
+// configuration as an empty list. Management edits must preserve this error.
+func StoredSearchAPIsChecked() ([]SearchAPI, error) {
+	f, err := read()
+	return f.Searches, err
+}
+
+// SaveSearchAPI writes one fully merged search API at its existing priority.
+// Unlike SetSearchAPI, it never implicitly retains a key, pick or enabled state.
+// Callers serialize their complete read/merge/save transaction.
+func SaveSearchAPI(a SearchAPI) error {
+	if err := a.check(); err != nil {
+		return err
+	}
+	f, err := read()
+	if err != nil {
+		return err
+	}
+	i := slices.IndexFunc(f.Searches, func(x SearchAPI) bool { return x.Vendor == a.Vendor })
+	if i < 0 {
+		f.Searches = append(f.Searches, a)
+	} else {
+		if slices.ContainsFunc(f.Searches[i+1:], func(x SearchAPI) bool { return x.Vendor == a.Vendor }) {
+			return fmt.Errorf("duplicate search vendor %q must be resolved before editing", a.Vendor)
+		}
+		f.Searches[i] = a
+	}
+	return store(f)
+}
 
 // SetSearchAPI adds a search API, last, or changes the one of its vendor
 // where it is; a change with no key keeps the key it has, and one with no

@@ -27,23 +27,27 @@ func quotaPanelEnabled() bool { return os.Getenv("MAGPIE_QUOTA_PANEL") == "1" }
 // tokenPackRow deliberately excludes API keys and raw share credentials from
 // listings. The administrator can copy the package's independent share URL.
 type tokenPackRow struct {
-	ID              string     `json:"id"`
-	Name            string     `json:"name"`
-	Models          []string   `json:"models"`
-	TotalTokens     int64      `json:"totalTokens"`
-	UsedTokens      int64      `json:"usedTokens"`
-	ReservedTokens  int64      `json:"reservedTokens"`
-	RemainingTokens int64      `json:"remainingTokens"`
-	Enabled         bool       `json:"enabled"`
-	ExpiresAt       *time.Time `json:"expiresAt,omitempty"`
-	CreatedAt       time.Time  `json:"createdAt"`
-	ShareURL        string     `json:"shareURL,omitempty"`
+	ID                string     `json:"id"`
+	Name              string     `json:"name"`
+	Models            []string   `json:"models"`
+	TotalTokens       int64      `json:"totalTokens"`
+	UsedTokens        int64      `json:"usedTokens"`
+	ReservedTokens    int64      `json:"reservedTokens"`
+	RemainingTokens   int64      `json:"remainingTokens"`
+	Enabled           bool       `json:"enabled"`
+	ExpiresAt         *time.Time `json:"expiresAt,omitempty"`
+	CreatedAt         time.Time  `json:"createdAt"`
+	ShareURL          string     `json:"shareURL,omitempty"`
+	MCPTotalCalls     int64      `json:"mcpTotalCalls"`
+	MCPUsedCalls      int64      `json:"mcpUsedCalls"`
+	MCPRemainingCalls int64      `json:"mcpRemainingCalls"`
 }
 
 func packRow(p tokenpack.Pack) tokenPackRow {
 	row := tokenPackRow{ID: p.ID, Name: p.Name, Models: p.Models, TotalTokens: p.TotalTokens,
 		UsedTokens: p.UsedTokens, ReservedTokens: p.ReservedTokens, RemainingTokens: p.RemainingTokens,
-		Enabled: p.Enabled, CreatedAt: p.CreatedAt}
+		Enabled: p.Enabled, CreatedAt: p.CreatedAt,
+		MCPTotalCalls: p.MCPTotalCalls, MCPUsedCalls: p.MCPUsedCalls, MCPRemainingCalls: p.MCPRemainingCalls}
 	if !p.ExpiresAt.IsZero() {
 		row.ExpiresAt = &p.ExpiresAt
 	}
@@ -58,10 +62,12 @@ func packRow(p tokenpack.Pack) tokenPackRow {
 func quotaPanelHandler() http.Handler {
 	mux := http.NewServeMux()
 	quotaProviderRoutes(mux)
+	quotaSearchRoutes(mux)
 	for _, item := range []struct{ route, asset, contentType string }{
 		{"GET /{$}", "quota/index.html", "text/html; charset=utf-8"},
 		{"GET /quota/app.js", "quota/app.js", "text/javascript; charset=utf-8"},
 		{"GET /quota/providers.js", "quota/providers.js", "text/javascript; charset=utf-8"},
+		{"GET /quota/searches.js", "quota/searches.js", "text/javascript; charset=utf-8"},
 		{"GET /quota/i18n.js", "quota/i18n.js", "text/javascript; charset=utf-8"},
 		{"GET /quota/app.css", "quota/app.css", "text/css; charset=utf-8"},
 	} {
@@ -98,15 +104,16 @@ func quotaPanelHandler() http.Handler {
 			return
 		}
 		var in struct {
-			Name        string    `json:"name"`
-			Models      []string  `json:"models"`
-			TotalTokens int64     `json:"totalTokens"`
-			ExpiresAt   time.Time `json:"expiresAt"`
+			Name          string    `json:"name"`
+			Models        []string  `json:"models"`
+			TotalTokens   int64     `json:"totalTokens"`
+			MCPTotalCalls int64     `json:"mcpTotalCalls"`
+			ExpiresAt     time.Time `json:"expiresAt"`
 		}
 		if !packDecode(w, r, &in) {
 			return
 		}
-		p, err := tokenpack.Create(in.Name, in.Models, in.TotalTokens, in.ExpiresAt)
+		p, err := tokenpack.CreateWithMCP(in.Name, in.Models, in.TotalTokens, in.ExpiresAt, in.MCPTotalCalls)
 		if err != nil {
 			packError(w, err)
 			return
@@ -117,17 +124,18 @@ func quotaPanelHandler() http.Handler {
 	})
 	mux.HandleFunc("PATCH /api/token-packs/{id}", func(w http.ResponseWriter, r *http.Request) {
 		var in struct {
-			TotalTokens *int64 `json:"totalTokens"`
-			Enabled     *bool  `json:"enabled"`
+			TotalTokens   *int64 `json:"totalTokens"`
+			Enabled       *bool  `json:"enabled"`
+			MCPTotalCalls *int64 `json:"mcpTotalCalls"`
 		}
 		if !packDecode(w, r, &in) {
 			return
 		}
-		if in.TotalTokens == nil && in.Enabled == nil {
-			packJSONError(w, http.StatusBadRequest, "Provide totalTokens or enabled.")
+		if in.TotalTokens == nil && in.Enabled == nil && in.MCPTotalCalls == nil {
+			packJSONError(w, http.StatusBadRequest, "Provide totalTokens, mcpTotalCalls or enabled.")
 			return
 		}
-		p, err := tokenpack.Patch(r.PathValue("id"), in.TotalTokens, in.Enabled)
+		p, err := tokenpack.PatchWithMCP(r.PathValue("id"), in.TotalTokens, in.Enabled, in.MCPTotalCalls)
 		if err != nil {
 			packError(w, err)
 			return
@@ -270,6 +278,10 @@ func packLogs(w http.ResponseWriter, r *http.Request) {
 		Outcome    string    `json:"outcome"`
 		CreatedAt  time.Time `json:"createdAt"`
 		DurationMS int64     `json:"durationMs"`
+		Source     string    `json:"source"`
+		Tool       string    `json:"tool,omitempty"`
+		Unit       string    `json:"unit"`
+		Calls      int64     `json:"calls"`
 	}
 	rows := make([]row, 0, len(entries))
 	for _, e := range entries {
@@ -291,7 +303,16 @@ func packLogs(w http.ResponseWriter, r *http.Request) {
 		if e.StatusCode > 0 {
 			status = strconv.Itoa(e.StatusCode)
 		}
-		rows = append(rows, row{e.ID, e.PackID, names[e.PackID], e.Model, e.TotalTokens, status, outcome, e.CreatedAt, ms})
+		source, tool := "api", ""
+		if e.Endpoint == gateway.PackageMCPPath {
+			source = "mcp"
+			if e.Unit == "calls" {
+				tool = e.Tool
+			} else if e.Model != "" {
+				tool = "generate_text"
+			}
+		}
+		rows = append(rows, row{e.ID, e.PackID, names[e.PackID], e.Model, e.TotalTokens, status, outcome, e.CreatedAt, ms, source, tool, e.Unit, e.Calls})
 	}
 	writeJSON(w, map[string][]row{"logs": rows})
 }
@@ -343,13 +364,22 @@ func tokenPackPublic(next http.Handler) http.Handler {
 		if !p.ExpiresAt.IsZero() {
 			expiry = p.ExpiresAt.In(time.FixedZone("UTC+08:00", 8*60*60)).Format("2006-01-02 15:04 UTC+08:00")
 		}
+		rootURL := strings.TrimRight(gateway.PublicURL(), "/")
+		mcpURL := rootURL + gateway.PackageMCPPath
+		mcpConfig, err := tokenPackMCPConfig(mcpURL, p.APIKey)
+		if err != nil {
+			http.Error(w, "The share page is unavailable.", http.StatusServiceUnavailable)
+			return
+		}
 		if err := tokenPackShareTemplate.Execute(&body, struct {
-			Pack    tokenpack.Pack
-			BaseURL string
-			RootURL string
-			Expiry  string
-			Nonce   string
-		}{p, packBaseURL(), strings.TrimRight(gateway.PublicURL(), "/"), expiry, nonce}); err != nil {
+			Pack      tokenpack.Pack
+			BaseURL   string
+			RootURL   string
+			Expiry    string
+			Nonce     string
+			MCPURL    string
+			MCPConfig string
+		}{p, packBaseURL(), rootURL, expiry, nonce, mcpURL, mcpConfig}); err != nil {
 			http.Error(w, "The share page is unavailable.", http.StatusServiceUnavailable)
 			return
 		}

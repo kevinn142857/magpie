@@ -1,8 +1,8 @@
 "use strict";
 
 (() => {
-  /** @typedef {{id:string,name:string,models:string[],totalTokens:number,usedTokens:number,reservedTokens?:number,remainingTokens:number,enabled:boolean,expiresAt?:string,createdAt:string,shareURL?:string}} Pack */
-  /** @typedef {{id:string,packId:string,packName?:string,model:string,tokens:number,status:string,createdAt:string,durationMs?:number,outcome?:string}} RequestLog */
+  /** @typedef {{id:string,name:string,models:string[],totalTokens:number,usedTokens:number,reservedTokens?:number,remainingTokens:number,mcpTotalCalls?:number,mcpUsedCalls?:number,mcpRemainingCalls?:number,enabled:boolean,expiresAt?:string,createdAt:string,shareURL?:string}} Pack */
+  /** @typedef {{id:string,packId:string,packName?:string,model:string,tokens:number,status:string,createdAt:string,durationMs?:number,outcome?:string,source?:string,unit?:string,calls?:number,tool?:string}} RequestLog */
   const $ = (selector) => document.querySelector(selector);
   /** @type {{packs:Pack[],models:{id:string,name:string}[],baseURL:string,loaded:boolean,view:string,filter:string,edit:Pack|null,settle:RequestLog|null}} */
   const state = { packs: [], models: [], baseURL: "", loaded: false, view: "overview", filter: "", edit: null, settle: null };
@@ -112,7 +112,7 @@
     document.querySelectorAll(".create-pack").forEach((element) => { element.hidden = view === "providers"; });
     $("#add-provider").hidden = view !== "providers";
     if (view === "logs") void loadLogs();
-    if (view === "providers") void window.quotaProviders?.load();
+    if (view === "providers") { void window.quotaProviders?.load(); void window.quotaSearches?.load(); }
   }
 
   function renderBalance(pack, summary) {
@@ -137,6 +137,7 @@
     const balance = node("div", "balance-group");
     balance.append(amount, meter);
     if (pack.reservedTokens > 0) balance.append(node("span", "reserved-note", quotaT("reserved", { n: number(pack.reservedTokens) })));
+    balance.append(node("div", "calls-balance", quotaT("callsBalance", { remaining: number(pack.mcpRemainingCalls || 0), used: number(pack.mcpUsedCalls || 0), total: number(pack.mcpTotalCalls || 0) })));
     row.append(identity, balance);
     if (!summary) {
       const actions = node("div", "row-actions");
@@ -256,16 +257,19 @@
       container.replaceChildren();
       if (!body.logs.length) return void container.append(empty("noLogs", "noLogsHelp"));
       const scroll = node("div", "table-scroll"), table = node("table", "log-table"), head = node("thead"), tr = node("tr");
-      for (const label of ["time", "package", "model", "tokens", "status", "duration"]) tr.append(node("th", "", quotaT(label)));
+      for (const label of ["time", "package", "modelOrTool", "consumed", "status", "duration"]) tr.append(node("th", "", quotaT(label)));
       head.append(tr);
       table.append(head);
       const tbody = node("tbody");
       for (const log of body.logs) {
         const outcome = log.outcome || log.status;
-        const unsettled = outcome === "uncertain" || outcome === "pending";
+        const calls = log.unit === "calls";
+        const unsettled = !calls && (outcome === "uncertain" || outcome === "pending");
         const row = node("tr");
+        const model = node("td", "model-cell", calls ? log.tool || "—" : log.model || "—");
+        if (log.source === "mcp") model.append(node("span", "http-code mcp-source", "MCP"));
         row.append(node("td", "time-cell", date(log.createdAt)), node("td", "", log.packName || state.packs.find((pack) => pack.id === log.packId)?.name || log.packId),
-          node("td", "model-cell", log.model || "—"), node("td", "numeric", unsettled ? "—" : number(log.tokens || 0)));
+          model, node("td", "numeric", calls ? quotaT("callsCount", { n: number(log.calls || 0) }) : unsettled ? "—" : `${number(log.tokens || 0)} Token`));
         const status = node("td", "");
         status.append(badge(["completed", "failed", "pending", "uncertain"].includes(outcome) ? outcome : "uncertain"));
         if (/^[1-5]\d{2}$/.test(String(log.status))) status.append(node("span", "http-code", `HTTP ${log.status}`));
@@ -303,8 +307,10 @@
     $("#submit-pack").textContent = quotaT(pack ? "save" : "create");
     $("#create-fields").hidden = !!pack;
     $("#expiry-field").hidden = !!pack;
+    $("#calls-field").hidden = false;
     $("#pack-quota").closest("label").querySelector("[data-i18n=quota]").textContent = quotaT("quota");
     $("#pack-quota").value = pack ? String(pack.totalTokens) : "1M";
+    $("#pack-calls").value = String(pack?.mcpTotalCalls || 0);
     $("#pack-dialog").showModal();
     (pack ? $("#pack-quota") : $("#pack-name")).focus({ preventScroll: true });
     if (!pack) {
@@ -341,6 +347,7 @@
     $("#submit-pack").textContent = quotaT("settle");
     $("#pack-quota").closest("label").querySelector("[data-i18n=quota]").textContent = quotaT("actualTokens");
     $("#pack-quota").value = "";
+    $("#calls-field").hidden = true;
   }
 
   function closeForm() {
@@ -358,12 +365,18 @@
     $("#form-error").hidden = true;
     const totalTokens = tokenAmount($("#pack-quota").value, !!state.settle);
     if (totalTokens === null) return message(quotaT("invalidQuota"), "#form-error");
+    const callInput = $("#pack-calls").value.trim();
+    const mcpTotalCalls = /^\d+$/.test(callInput) ? Number(callInput) : NaN;
+    if (!state.settle && (!Number.isSafeInteger(mcpTotalCalls) || mcpTotalCalls < 0)) return message(quotaT("invalidCalls"), "#form-error");
     let body, url = "/api/token-packs", method = "POST";
     if (state.settle) {
       url = `/api/token-packs/logs/${encodeURIComponent(state.settle.id)}/settle`;
       body = { actualTokens: totalTokens };
     } else if (state.edit) {
-      body = { totalTokens };
+      body = {};
+      if (totalTokens !== state.edit.totalTokens) body.totalTokens = totalTokens;
+      if (mcpTotalCalls !== (state.edit.mcpTotalCalls || 0)) body.mcpTotalCalls = mcpTotalCalls;
+      if (!Object.keys(body).length) return closeForm();
       url += `/${encodeURIComponent(state.edit.id)}`;
       method = "PATCH";
     } else {
@@ -372,7 +385,7 @@
       const models = [...new Set([...document.querySelectorAll("#model-choices input:checked")].map((input) => input.value)
         .concat($("#custom-models").value.split(/[,，\n]/).map((value) => value.trim()).filter(Boolean)))];
       if (!models.length) return message(quotaT("modelsRequired"), "#form-error");
-      body = { name, models, totalTokens };
+      body = { name, models, totalTokens, mcpTotalCalls };
       const expires = $("#pack-expires").value;
       if (expires) {
         const value = new Date(expires);
@@ -418,7 +431,7 @@
   $("#refresh").addEventListener("click", async () => {
     await loadPacks();
     if (state.view === "logs") await loadLogs();
-    if (state.view === "providers") await window.quotaProviders?.load();
+    if (state.view === "providers") { await window.quotaProviders?.load(); await window.quotaSearches?.load(); }
   });
   $("#copy-base-url").addEventListener("click", () => copy(state.baseURL));
   $("#pack-form").addEventListener("submit", submitForm);

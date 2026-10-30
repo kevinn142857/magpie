@@ -110,7 +110,7 @@ func (s *Server) apiSearch(ctx context.Context, query string) (string, []Hit, er
 		return "", nil, err
 	}
 	var errs []error
-	for _, a := range provider.SearchAPIs() {
+	for _, a := range packageMCPSearchAPIs(ctx) {
 		pages, err := s.askSearchAPIKeys(ctx, a, query)
 		if err != nil {
 			errs = append(errs, fmt.Errorf("%s: %w", a.Name(), err))
@@ -286,7 +286,14 @@ func (s *Server) askSearchAPI(ctx context.Context, a provider.SearchAPI, query s
 		return nil, err
 	}
 	defer res.Body.Close()
-	b, _ := io.ReadAll(io.LimitReader(res.Body, 4<<20))
+	limit := int64(4 << 20)
+	if packageMCPToolActive(ctx) {
+		limit++
+	}
+	b, readErr := io.ReadAll(io.LimitReader(res.Body, limit))
+	if packageMCPToolActive(ctx) && (readErr != nil || len(b) > 4<<20) {
+		return nil, errors.New("package search response exceeded its bounds")
+	}
 	if res.StatusCode >= 300 && res.StatusCode < 400 && res.Header.Get("Location") != "" {
 		return nil, fmt.Errorf("%s: it sends the search on to %s, which isn't given its key; set that address instead", res.Status, res.Header.Get("Location"))
 	}

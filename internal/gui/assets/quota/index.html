@@ -11,6 +11,7 @@
     <script defer src="/quota/i18n.js"></script>
     <script defer src="/quota/app.js"></script>
     <script defer src="/quota/providers.js"></script>
+    <script defer src="/quota/searches.js"></script>
   </head>
   <body>
     <div class="shell">
@@ -165,6 +166,13 @@
               <div id="provider-list"></div>
             </section>
             <p class="under-note" data-i18n="providerHelp"></p>
+            <section class="card search-card">
+              <div class="card-heading">
+                <div><h2 data-i18n="searchServices"></h2><p class="muted" data-i18n="searchServicesHelp"></p></div>
+                <button type="button" id="add-search" class="button secondary" data-i18n="addSearch"></button>
+              </div>
+              <div id="search-list"></div>
+            </section>
           </section>
         </main>
         <footer>
@@ -202,6 +210,11 @@
           <span id="quota-label" data-i18n="quota"></span>
           <input id="pack-quota" name="quota" inputmode="decimal" autocomplete="off" placeholder="1M" aria-labelledby="quota-label" aria-describedby="quota-help" required>
           <span class="field-hint" id="quota-help" data-i18n="quotaHelp"></span>
+        </label>
+        <label class="field" id="calls-field">
+          <span id="calls-label" data-i18n="callQuota"></span>
+          <input id="pack-calls" name="mcpTotalCalls" inputmode="numeric" autocomplete="off" value="0" aria-labelledby="calls-label" aria-describedby="calls-help">
+          <span id="calls-help" class="field-hint" data-i18n="callQuotaHelp"></span>
         </label>
         <label class="field" id="expiry-field">
           <span id="expiry-label" data-i18n="expires"></span>
@@ -264,6 +277,19 @@
           <button type="button" id="cancel-provider" class="button secondary" data-i18n="cancel"></button>
           <button type="submit" id="save-provider" class="button primary" data-i18n="saveProvider"></button>
         </div>
+      </form>
+    </dialog>
+    <dialog id="search-dialog" aria-labelledby="search-dialog-title">
+      <form id="search-form" novalidate>
+        <div class="dialog-head"><div><span class="eyebrow" data-i18n="searchServices"></span><h2 id="search-dialog-title"></h2></div><button type="button" id="close-search" class="icon-button" data-i18n-label="close">×</button></div>
+        <div class="field"><span data-i18n="searchVendor"></span><div class="search-picker">
+          <button type="button" id="search-vendor" class="button secondary" aria-haspopup="menu" aria-expanded="false" data-i18n-label="searchVendor"><span id="search-vendor-name"></span><span aria-hidden="true">⌄</span></button>
+          <div id="search-vendor-menu" class="filter-menu protocol-menu" role="menu" hidden></div>
+        </div></div>
+        <label class="field"><span id="search-url-label" data-i18n="searchURL"></span><input id="search-url" type="url" autocomplete="off" autocapitalize="off" spellcheck="false" aria-labelledby="search-url-label" aria-describedby="search-url-help"><span id="search-url-help" class="field-hint" data-i18n="searchURLHelp"></span></label>
+        <label class="field"><span id="search-key-label" data-i18n="searchKey"></span><input id="search-key" type="password" autocomplete="new-password" autocapitalize="off" spellcheck="false" aria-labelledby="search-key-label" aria-describedby="search-key-help"><span id="search-key-help" class="field-hint"></span></label>
+        <div id="search-form-error" class="notice error" role="alert" hidden></div>
+        <div class="dialog-actions"><button type="button" id="cancel-search" class="button secondary" data-i18n="cancel"></button><button type="submit" id="save-search" class="button primary" data-i18n="saveSearch"></button></div>
       </form>
     </dialog>
     <div id="toast" class="toast" role="status" hidden></div>

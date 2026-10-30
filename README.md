@@ -3,6 +3,10 @@
 > authenticated management MCP lets agents use the same operations. Each package
 > has a model allowlist, a lifetime token allowance and an independent sharing link. See the
 > [deployment guide](docs/token-packages.md). Build this fork to keep its quota enforcement.
+> Recipients can also use their package key with a separate model MCP for quota
+> lookup, model discovery and text generation, sharing the same token allowance.
+> Optional search and webpage tools use a separate durable call allowance;
+> their search services are configured in the same supplier page.
 
 <div align="center">
 

@@ -133,10 +133,11 @@ func fetchPage(ctx context.Context, u *url.URL) (title, text, final string, err 
 	// the URL each redirect leads to, by name: the response's own request
 	// is the one sent, to the address the name was pinned to
 	last := req.URL
-	c := *webFetchClient
+	source := packageMCPFetchClient(ctx)
+	c := *source
 	c.CheckRedirect = func(next *http.Request, via []*http.Request) error {
-		if webFetchClient.CheckRedirect != nil {
-			if err := webFetchClient.CheckRedirect(next, via); err != nil {
+		if source.CheckRedirect != nil {
+			if err := source.CheckRedirect(next, via); err != nil {
 				return err
 			}
 		} else if len(via) >= 10 {
